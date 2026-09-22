@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}学习记录 | 学习打卡{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">我的学习记录</h1>
+        <p class="text-secondary mb-0">记录每天学了什么、学了多久，并坚持完成。</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('new_record') }}">新增学习记录</a>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <form class="row g-2 align-items-end" method="get">
+            <div class="col-12 col-md-4">
+                <label class="form-label" for="date">按日期筛选</label>
+                <input class="form-control" id="date" name="date" type="date" value="{{ selected_date }}">
+            </div>
+            <div class="col-12 col-md-auto d-flex gap-2">
+                <button class="btn btn-outline-primary" type="submit">筛选</button>
+                {% if selected_date %}
+                    <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">清除</a>
+                {% endif %}
+            </div>
+            <div class="col-12 col-md">
+                <p class="text-secondary small mb-0">今天：{{ today }}</p>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary mb-1">记录数量</p>
+                <p class="display-6 fw-semibold mb-0">{{ summary.total_records }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary mb-1">学习时长</p>
+                <p class="display-6 fw-semibold mb-0">{{ summary.total_minutes }} <span class="fs-5">分钟</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary mb-1">已完成</p>
+                <p class="display-6 fw-semibold mb-0">{{ summary.completed_records }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if records %}
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">学习内容</th>
+                        <th scope="col">日期</th>
+                        <th scope="col">时长</th>
+                        <th scope="col">状态</th>
+                        <th scope="col" class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in records %}
+                        <tr class="{{ 'table-success' if record.completed else '' }}">
+                            <td>
+                                <div class="fw-semibold">{{ record.title }}</div>
+                                <div class="small text-secondary">
+                                    {{ record.subject or '未填写科目' }}
+                                    {% if record.notes %}
+                                        · {{ record.notes }}
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="text-nowrap">{{ record.study_date }}</td>
+                            <td class="text-nowrap">{{ record.duration_minutes }} 分钟</td>
+                            <td>
+                                {% if record.completed %}
+                                    <span class="badge text-bg-success">已完成</span>
+                                {% else %}
+                                    <span class="badge text-bg-secondary">进行中</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex justify-content-end gap-1 flex-wrap">
+                                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('edit_record', record_id=record.id) }}">编辑</a>
+                                    <form method="post" action="{{ url_for('toggle_record', record_id=record.id) }}">
+                                        <button class="btn btn-sm btn-outline-success" type="submit">
+                                            {{ '取消完成' if record.completed else '标记完成' }}
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{{ url_for('delete_record', record_id=record.id) }}" onsubmit="return confirm('确定要删除这条学习记录吗？');">
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">删除</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% else %}
+    <div class="card border-0 shadow-sm">
+        <div class="card-body py-5 text-center">
+            <h2 class="h5">还没有学习记录</h2>
+            <p class="text-secondary">从今天开始，添加第一条学习记录。</p>
+            <a class="btn btn-primary" href="{{ url_for('new_record') }}">添加记录</a>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
