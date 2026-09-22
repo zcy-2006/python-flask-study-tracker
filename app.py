@@ -752,6 +752,59 @@ def admin_required(view):
     return wrapped
 
 
+
+def get_client_ip():
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def log_event(db, event, detail="", user_id=None):
+    if user_id is None and current_user.is_authenticated:
+        user_id = current_user.id
+    db.execute(
+        """
+        INSERT INTO audit_logs (user_id, event, detail, ip_address)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user_id, event, detail[:500], get_client_ip()),
+    )
+    db.commit()
+
+
+def login_attempt_count(db, username):
+    since = (datetime.utcnow() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM login_attempts
+        WHERE username = ? AND ip_address = ? AND attempted_at >= ?
+        """,
+        (username, get_client_ip(), since),
+    ).fetchone()
+    return row["count"]
+
+
+def record_login_failure(db, username):
+    db.execute(
+        """
+        INSERT INTO login_attempts (username, ip_address)
+        VALUES (?, ?)
+        """,
+        (username, get_client_ip()),
+    )
+    db.commit()
+
+
+def clear_login_failures(db, username):
+    db.execute(
+        "DELETE FROM login_attempts WHERE username = ? AND ip_address = ?",
+        (username, get_client_ip()),
+    )
+    db.commit()
+
+
 def register_routes(app):
     @app.route("/register", methods=("GET", "POST"))
     def register():
@@ -783,6 +836,12 @@ def register_routes(app):
                 except sqlite3.IntegrityError:
                     error = "该用户名已经被注册。"
                 if error is None:
+                    log_event(
+                        get_db(),
+                        "user.registered",
+                        "新用户注册：" + username,
+                        user_id=user.id,
+                    )
                     flash("注册成功，欢迎开始学习。", "success")
                     return redirect(url_for("index"))
             flash(error, "error")
@@ -797,7 +856,12 @@ def register_routes(app):
         if request.method == "POST":
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "")
-            row = get_db().execute(
+            db = get_db()
+            if login_attempt_count(db, username) >= 5:
+                flash("登录失败次数过多，请 15 分钟后再试。", "error")
+                return render_template("login.html", username=username)
+
+            row = db.execute(
                 """
                 SELECT id, username, password_hash, is_admin
                 FROM users
@@ -809,6 +873,7 @@ def register_routes(app):
             if row is not None and check_password_hash(
                 row["password_hash"], password
             ):
+                clear_login_failures(db, username)
                 login_user(
                     User(
                         row["id"],
@@ -818,9 +883,12 @@ def register_routes(app):
                     ),
                     remember=request.form.get("remember") == "1",
                 )
+                log_event(db, "user.login", "用户登录：" + username, user_id=row["id"])
                 flash("登录成功。", "success")
                 return redirect(url_for("index"))
 
+            record_login_failure(db, username)
+            log_event(db, "user.login_failed", "登录失败：" + username)
             flash("用户名或密码不正确。", "error")
 
         return render_template("login.html", username=username)
@@ -828,6 +896,7 @@ def register_routes(app):
     @app.post("/logout")
     @login_required
     def logout():
+        log_event(get_db(), "user.logout", "用户退出登录")
         logout_user()
         flash("你已退出登录。", "success")
         return redirect(url_for("login"))
@@ -996,6 +1065,11 @@ def register_routes(app):
                 db = get_db()
                 insert_record(db, current_user.id, record)
                 db.commit()
+                log_event(
+                    db,
+                    "record.created",
+                    "新增学习记录：" + record["title"],
+                )
                 flash("学习记录已添加。", "success")
                 return redirect(url_for("index"))
 
@@ -1040,6 +1114,11 @@ def register_routes(app):
                     ),
                 )
                 db.commit()
+                log_event(
+                    db,
+                    "record.updated",
+                    "更新学习记录：" + record["title"],
+                )
                 flash("学习记录已更新。", "success")
                 return redirect(url_for("index"))
 
@@ -1067,6 +1146,11 @@ def register_routes(app):
             (completed, record_id, current_user.id),
         )
         db.commit()
+        log_event(
+            db,
+            "record.toggled",
+            "更新完成状态，记录 ID：%s" % record_id,
+        )
         flash("完成状态已更新。", "success")
 
         filters, _ = read_filters(request.form)
@@ -1082,6 +1166,7 @@ def register_routes(app):
             (record_id, current_user.id),
         )
         db.commit()
+        log_event(db, "record.deleted", "删除记录 ID：%s" % record_id)
         flash("学习记录已删除。", "success")
 
         filters, _ = read_filters(request.form)
@@ -1164,6 +1249,7 @@ def register_routes(app):
                     ),
                 )
                 db.commit()
+                log_event(db, "settings.updated", "更新每日和每周目标")
                 flash("学习目标已更新。", "success")
                 return redirect(url_for("settings_page"))
 
@@ -1196,6 +1282,17 @@ def register_routes(app):
             (current_user.id,),
         ).fetchone()
 
+        recent_activity = db.execute(
+            """
+            SELECT event, detail, ip_address, created_at
+            FROM audit_logs
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 10
+            """,
+            (current_user.id,),
+        ).fetchall()
+
         if request.method == "POST":
             current_password = request.form.get("current_password", "")
             new_password = request.form.get("new_password", "")
@@ -1226,6 +1323,7 @@ def register_routes(app):
             "account.html",
             account=dict(user_row),
             account_stats=account_stats,
+            recent_activity=recent_activity,
         )
 
     @app.get("/backup.json")
@@ -1342,6 +1440,11 @@ def register_routes(app):
             ),
         )
         db.commit()
+        log_event(
+            db,
+            "backup.imported",
+            "导入备份：新增 %d 条，跳过 %d 条" % (imported_count, skipped_count),
+        )
         flash(
             "导入完成：新增 %d 条，跳过 %d 条。"
             % (imported_count, skipped_count),
@@ -1376,6 +1479,7 @@ def register_routes(app):
                         ),
                     )
                     db.commit()
+                    log_event(db, "admin.registration_updated", "更新注册设置")
                     flash("注册设置已更新。", "success")
                     return redirect(url_for("admin_page"))
                 flash(error, "error")
@@ -1408,6 +1512,7 @@ def register_routes(app):
                                 (target_id,),
                             )
                             db.commit()
+                            log_event(db, "admin.user_demoted", "取消管理员：" + target["username"])
                             flash("用户管理员权限已取消。", "success")
                     else:
                         db.execute(
@@ -1415,6 +1520,7 @@ def register_routes(app):
                             (target_id,),
                         )
                         db.commit()
+                        log_event(db, "admin.user_promoted", "设为管理员：" + target["username"])
                         flash("用户已设为管理员。", "success")
                 return redirect(url_for("admin_page"))
 
@@ -1434,10 +1540,23 @@ def register_routes(app):
             """
         ).fetchall()
 
+        recent_events = db.execute(
+            """
+            SELECT audit_logs.event, audit_logs.detail,
+                   audit_logs.ip_address, audit_logs.created_at,
+                   COALESCE(users.username, '未登录用户') AS username
+            FROM audit_logs
+            LEFT JOIN users ON users.id = audit_logs.user_id
+            ORDER BY audit_logs.id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+
         return render_template(
             "admin.html",
             app_settings=app_settings,
             users=users,
+            recent_events=recent_events,
         )
 
     @app.get("/health")

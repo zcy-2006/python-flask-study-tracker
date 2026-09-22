@@ -100,4 +100,31 @@
         </form>
     </div>
 </div>
+
+<div class="row justify-content-center mt-4">
+    <div class="col-12 col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-4">
+                <h2 class="h5 mb-3">最近操作</h2>
+                {% if recent_activity %}
+                    <div class="list-group list-group-flush">
+                        {% for item in recent_activity %}
+                            <div class="list-group-item px-0">
+                                <div class="d-flex justify-content-between gap-3">
+                                    <div>
+                                        <div class="fw-semibold">{{ item.event }}</div>
+                                        <div class="small text-secondary">{{ item.detail }}</div>
+                                    </div>
+                                    <div class="small text-secondary text-nowrap">{{ item.created_at }}</div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-secondary mb-0">暂无操作记录。</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

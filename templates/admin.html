@@ -98,4 +98,28 @@
         </div>
     </div>
 </div>
+
+<div class="card border-0 shadow-sm mt-4">
+    <div class="card-body p-4">
+        <h2 class="h5 mb-3">最近活动</h2>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead class="table-light"><tr><th>时间</th><th>用户</th><th>事件</th><th>详情</th><th>IP</th></tr></thead>
+                <tbody>
+                    {% for item in recent_events %}
+                        <tr>
+                            <td class="text-nowrap">{{ item.created_at }}</td>
+                            <td>{{ item.username }}</td>
+                            <td><code>{{ item.event }}</code></td>
+                            <td>{{ item.detail }}</td>
+                            <td class="small text-secondary">{{ item.ip_address }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="5" class="text-center text-secondary py-4">暂无活动记录</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 {% endblock %}

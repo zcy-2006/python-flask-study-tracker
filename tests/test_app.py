@@ -484,6 +484,27 @@ class StudyTrackerTestCase(unittest.TestCase):
         response = self.client.get("/admin")
         self.assertEqual(response.status_code, 403)
 
+    def test_audit_log_visible(self):
+        self.create_record(title="审计测试记录", tags="Python")
+        account_page = self.client.get("/account").get_data(as_text=True)
+        self.assertIn("record.created", account_page)
+        admin_page = self.client.get("/admin").get_data(as_text=True)
+        self.assertIn("record.created", admin_page)
+
+    def test_login_rate_limit(self):
+        self.client.post("/logout")
+        for _ in range(5):
+            self.client.post(
+                "/login",
+                data={"username": "tester", "password": "wrong-password"},
+            )
+        response = self.client.post(
+            "/login",
+            data={"username": "tester", "password": "test-password"},
+            follow_redirects=True,
+        )
+        self.assertIn("登录失败次数过多", response.get_data(as_text=True))
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
