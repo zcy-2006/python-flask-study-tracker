@@ -127,4 +127,23 @@
         </div>
     </div>
 </div>
+
+<div class="row justify-content-center mt-4">
+    <div class="col-12 col-lg-8">
+        <div class="card border-danger shadow-sm">
+            <div class="card-body p-4">
+                <h2 class="h5 text-danger mb-2">注销账号</h2>
+                <p class="text-secondary">账号注销后，学习记录和目标将被永久删除，操作不可恢复。</p>
+                <form method="post" action="{{ url_for('delete_account') }}" onsubmit="return confirm('确定永久注销账号吗？此操作不可恢复。');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="delete_password">输入密码确认</label>
+                        <input class="form-control" id="delete_password" name="password" type="password" required>
+                    </div>
+                    <button class="btn btn-danger" type="submit">永久注销账号</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

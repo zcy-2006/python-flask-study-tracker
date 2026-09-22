@@ -505,6 +505,25 @@ class StudyTrackerTestCase(unittest.TestCase):
         )
         self.assertIn("登录失败次数过多", response.get_data(as_text=True))
 
+    def test_admin_cannot_disable_self(self):
+        response = self.client.post(
+            "/admin",
+            data={"action": "toggle_enabled", "user_id": "1"},
+            follow_redirects=True,
+        )
+        self.assertIn("不能停用自己的账号", response.get_data(as_text=True))
+
+    def test_user_can_delete_own_account(self):
+        self.client.post("/logout")
+        self.register_user(username="delete-me")
+        response = self.client.post(
+            "/account/delete",
+            data={"password": "test-password"},
+            follow_redirects=True,
+        )
+        self.assertIn("账号已注销", response.get_data(as_text=True))
+        self.assertIn("欢迎回来", response.get_data(as_text=True))
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)

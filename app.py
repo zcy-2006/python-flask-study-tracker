@@ -43,18 +43,23 @@ login_manager.login_message_category = "warning"
 
 
 class User(UserMixin):
-    def __init__(self, user_id, username, password_hash=None, is_admin=0):
+    def __init__(self, user_id, username, password_hash=None, is_admin=0, is_enabled=1):
         self.id = str(user_id)
         self.username = username
         self.password_hash = password_hash
         self.is_admin = bool(is_admin)
+        self.is_enabled = bool(is_enabled)
+
+    @property
+    def is_active(self):
+        return self.is_enabled
 
 
 @login_manager.user_loader
 def load_user(user_id):
     row = get_db().execute(
         """
-        SELECT id, username, password_hash, is_admin
+        SELECT id, username, password_hash, is_admin, is_enabled
         FROM users
         WHERE id = ?
         """,
@@ -67,6 +72,7 @@ def load_user(user_id):
         row["username"],
         row["password_hash"],
         row["is_admin"],
+        row["is_enabled"],
     )
 
 
@@ -166,6 +172,10 @@ def migrate_db(db):
     if "is_admin" not in user_columns:
         db.execute(
             "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+        )
+    if "is_enabled" not in user_columns:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1"
         )
 
     db.execute(
@@ -863,12 +873,16 @@ def register_routes(app):
 
             row = db.execute(
                 """
-                SELECT id, username, password_hash, is_admin
+                SELECT id, username, password_hash, is_admin, is_enabled
                 FROM users
                 WHERE username = ?
                 """,
                 (username,),
             ).fetchone()
+
+            if row is not None and not row["is_enabled"]:
+                flash("该账号已被管理员停用。", "error")
+                return render_template("login.html", username=username)
 
             if row is not None and check_password_hash(
                 row["password_hash"], password
@@ -880,6 +894,7 @@ def register_routes(app):
                         row["username"],
                         row["password_hash"],
                         row["is_admin"],
+                        row["is_enabled"],
                     ),
                     remember=request.form.get("remember") == "1",
                 )
@@ -1326,6 +1341,39 @@ def register_routes(app):
             recent_activity=recent_activity,
         )
 
+    @app.post("/account/delete")
+    @login_required
+    def delete_account():
+        password = request.form.get("password", "")
+        db = get_db()
+        user_row = db.execute(
+            "SELECT password_hash, is_admin FROM users WHERE id = ?",
+            (current_user.id,),
+        ).fetchone()
+        if user_row is None or not check_password_hash(user_row["password_hash"], password):
+            flash("密码不正确，无法注销账号。", "error")
+            return redirect(url_for("account_page"))
+        if user_row["is_admin"]:
+            admin_count = db.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE is_admin = 1 AND is_enabled = 1"
+            ).fetchone()["count"]
+            if admin_count <= 1:
+                flash("最后一名管理员不能注销账号。", "error")
+                return redirect(url_for("account_page"))
+        user_id = current_user.id
+        username = current_user.username
+        logout_user()
+        log_event(
+            db,
+            "user.deleted",
+            "用户注销账号：" + username,
+            user_id=user_id,
+        )
+        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        db.commit()
+        flash("账号已注销。", "success")
+        return redirect(url_for("login"))
+
     @app.get("/backup.json")
     @login_required
     def backup_json():
@@ -1484,6 +1532,34 @@ def register_routes(app):
                     return redirect(url_for("admin_page"))
                 flash(error, "error")
 
+            elif action == "toggle_enabled":
+                try:
+                    target_id = int(request.form.get("user_id", ""))
+                except (TypeError, ValueError):
+                    target_id = 0
+                target = db.execute(
+                    "SELECT id, username, is_enabled FROM users WHERE id = ?",
+                    (target_id,),
+                ).fetchone()
+                if target is None:
+                    flash("用户不存在。", "error")
+                elif str(target["id"]) == str(current_user.id):
+                    flash("不能停用自己的账号。", "error")
+                else:
+                    enabled = 0 if target["is_enabled"] else 1
+                    db.execute(
+                        "UPDATE users SET is_enabled = ? WHERE id = ?",
+                        (enabled, target_id),
+                    )
+                    db.commit()
+                    log_event(
+                        db,
+                        "admin.user_enabled" if enabled else "admin.user_disabled",
+                        ("启用用户：" if enabled else "停用用户：") + target["username"],
+                    )
+                    flash("用户状态已更新。", "success")
+                return redirect(url_for("admin_page"))
+
             elif action == "toggle_admin":
                 try:
                     target_id = int(request.form.get("user_id", ""))
@@ -1530,6 +1606,7 @@ def register_routes(app):
                 users.id,
                 users.username,
                 users.is_admin,
+                users.is_enabled,
                 users.created_at,
                 COUNT(records.id) AS total_records,
                 COALESCE(SUM(records.duration_minutes), 0) AS total_minutes

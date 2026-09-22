@@ -60,6 +60,7 @@
                         <th>记录数</th>
                         <th>学习时长</th>
                         <th>角色</th>
+                        <th>状态</th>
                         <th class="text-end">操作</th>
                     </tr>
                 </thead>
@@ -77,8 +78,21 @@
                                     <span class="badge text-bg-secondary">普通用户</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                {% if user.is_enabled %}
+                                    <span class="badge text-bg-success">正常</span>
+                                {% else %}
+                                    <span class="badge text-bg-danger">已停用</span>
+                                {% endif %}
+                            </td>
                             <td class="text-end">
                                 {% if user.id|string != current_user.id %}
+                                    <form class="d-inline" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="action" value="toggle_enabled">
+                                        <input type="hidden" name="user_id" value="{{ user.id }}">
+                                        <button class="btn btn-sm {{ 'btn-outline-warning' if user.is_enabled else 'btn-outline-success' }}" type="submit">{{ '停用' if user.is_enabled else '启用' }}</button>
+                                    </form>
                                     <form class="d-inline" method="post">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="action" value="toggle_admin">
