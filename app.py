@@ -1,9 +1,12 @@
+import csv
+import io
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import (
     Flask,
+    Response,
     abort,
     current_app,
     flash,
@@ -117,6 +120,63 @@ def is_valid_date(value):
     return True
 
 
+def read_filters(args):
+    selected_date = args.get("date", "").strip()
+    query = args.get("q", "").strip()[:100]
+    selected_subject = args.get("subject", "").strip()[:50]
+    invalid_date = bool(selected_date and not is_valid_date(selected_date))
+
+    if invalid_date:
+        selected_date = ""
+
+    filters = {
+        "date": selected_date,
+        "q": query,
+        "subject": selected_subject,
+    }
+    return filters, invalid_date
+
+
+def build_record_query(filters):
+    conditions = []
+    params = []
+
+    if filters["date"]:
+        conditions.append("study_date = ?")
+        params.append(filters["date"])
+
+    if filters["q"]:
+        search_value = filters["q"]
+        conditions.append(
+            """
+            (
+                instr(lower(title), lower(?)) > 0
+                OR instr(lower(subject), lower(?)) > 0
+                OR instr(lower(notes), lower(?)) > 0
+            )
+            """
+        )
+        params.extend([search_value, search_value, search_value])
+
+    if filters["subject"]:
+        conditions.append("subject = ?")
+        params.append(filters["subject"])
+
+    where_clause = ""
+    if conditions:
+        where_clause = " WHERE " + " AND ".join(conditions)
+
+    return where_clause, params
+
+
+def filter_redirect_args(filters):
+    return {
+        key: value
+        for key, value in filters.items()
+        if value
+    }
+
+
 def get_record_or_404(record_id):
     record = get_db().execute(
         "SELECT * FROM records WHERE id = ?", (record_id,)
@@ -126,21 +186,37 @@ def get_record_or_404(record_id):
     return record
 
 
+def calculate_streak(study_dates, today=None):
+    today = today or date.today()
+    valid_dates = set()
+
+    for value in study_dates:
+        try:
+            valid_dates.add(datetime.strptime(value, "%Y-%m-%d").date())
+        except (TypeError, ValueError):
+            continue
+
+    if not valid_dates:
+        return 0
+
+    cursor = today if today in valid_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor in valid_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
 def register_routes(app):
     @app.get("/")
     def index():
-        selected_date = request.args.get("date", "").strip()
-        if selected_date and not is_valid_date(selected_date):
-            selected_date = ""
-            flash("筛选日期格式不正确，已显示全部记录。", "warning")
+        filters, invalid_date = read_filters(request.args)
+        if invalid_date:
+            flash("筛选日期格式不正确，已忽略该条件。", "warning")
 
-        where_clause = ""
-        params = []
-        if selected_date:
-            where_clause = " WHERE study_date = ?"
-            params.append(selected_date)
-
+        where_clause, params = build_record_query(filters)
         db = get_db()
+
         records = db.execute(
             "SELECT * FROM records"
             + where_clause
@@ -148,7 +224,7 @@ def register_routes(app):
             params,
         ).fetchall()
 
-        summary = db.execute(
+        summary_row = db.execute(
             """
             SELECT
                 COUNT(*) AS total_records,
@@ -159,13 +235,80 @@ def register_routes(app):
             + where_clause,
             params,
         ).fetchone()
+        summary = dict(summary_row)
+        if summary["total_records"]:
+            summary["completion_rate"] = round(
+                summary["completed_records"] * 100 / summary["total_records"]
+            )
+        else:
+            summary["completion_rate"] = 0
+
+        today_date = date.today()
+        week_start = today_date - timedelta(days=today_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        week_summary = db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_records,
+                COALESCE(SUM(duration_minutes), 0) AS total_minutes,
+                COALESCE(SUM(completed), 0) AS completed_records
+            FROM records
+            WHERE study_date BETWEEN ? AND ?
+            """,
+            (week_start.isoformat(), week_end.isoformat()),
+        ).fetchone()
+
+        streak_dates = [
+            row["study_date"]
+            for row in db.execute(
+                "SELECT DISTINCT study_date FROM records ORDER BY study_date DESC"
+            ).fetchall()
+        ]
+        streak = calculate_streak(streak_dates, today_date)
+
+        subject_stats = db.execute(
+            """
+            SELECT
+                subject,
+                COUNT(*) AS total_records,
+                COALESCE(SUM(duration_minutes), 0) AS total_minutes
+            FROM records
+            """
+            + where_clause
+            + """
+            GROUP BY subject
+            ORDER BY total_minutes DESC, subject ASC
+            LIMIT 5
+            """,
+            params,
+        ).fetchall()
+        max_subject_minutes = (
+            subject_stats[0]["total_minutes"] if subject_stats else 0
+        )
+
+        subjects = db.execute(
+            """
+            SELECT DISTINCT subject
+            FROM records
+            WHERE subject <> ''
+            ORDER BY subject COLLATE NOCASE
+            """
+        ).fetchall()
 
         return render_template(
             "index.html",
             records=records,
             summary=summary,
-            selected_date=selected_date,
-            today=date.today().isoformat(),
+            week_summary=week_summary,
+            week_start=week_start.isoformat(),
+            week_end=week_end.isoformat(),
+            streak=streak,
+            subject_stats=subject_stats,
+            max_subject_minutes=max_subject_minutes,
+            subjects=subjects,
+            filters=filters,
+            has_filters=any(filters.values()),
+            today=today_date.isoformat(),
         )
 
     @app.route("/records/new", methods=("GET", "POST"))
@@ -258,7 +401,9 @@ def register_routes(app):
         )
         db.commit()
         flash("完成状态已更新。", "success")
-        return redirect(url_for("index"))
+
+        filters, _ = read_filters(request.form)
+        return redirect(url_for("index", **filter_redirect_args(filters)))
 
     @app.post("/records/<int:record_id>/delete")
     def delete_record(record_id):
@@ -267,7 +412,57 @@ def register_routes(app):
         db.execute("DELETE FROM records WHERE id = ?", (record_id,))
         db.commit()
         flash("学习记录已删除。", "success")
-        return redirect(url_for("index"))
+
+        filters, _ = read_filters(request.form)
+        return redirect(url_for("index", **filter_redirect_args(filters)))
+
+    @app.get("/export.csv")
+    def export_records():
+        filters, _ = read_filters(request.args)
+        where_clause, params = build_record_query(filters)
+        records = get_db().execute(
+            "SELECT * FROM records"
+            + where_clause
+            + " ORDER BY study_date DESC, id DESC",
+            params,
+        ).fetchall()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "ID",
+                "学习内容",
+                "科目",
+                "学习时长（分钟）",
+                "学习日期",
+                "状态",
+                "学习笔记",
+                "创建时间",
+            ]
+        )
+        for record in records:
+            writer.writerow(
+                [
+                    record["id"],
+                    record["title"],
+                    record["subject"],
+                    record["duration_minutes"],
+                    record["study_date"],
+                    "已完成" if record["completed"] else "进行中",
+                    record["notes"],
+                    record["created_at"],
+                ]
+            )
+
+        csv_content = output.getvalue().encode("utf-8-sig")
+        return Response(
+            csv_content,
+            content_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": "attachment; filename=study-records.csv"
+            },
+        )
 
     @app.get("/health")
     def health():

@@ -11,3 +11,9 @@ CREATE TABLE IF NOT EXISTS records (
 
 CREATE INDEX IF NOT EXISTS idx_records_study_date
 ON records (study_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_records_subject
+ON records (subject);
+
+CREATE INDEX IF NOT EXISTS idx_records_completed
+ON records (completed);
