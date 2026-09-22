@@ -245,6 +245,18 @@ class StudyTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("该用户名已经被注册", response.get_data(as_text=True))
 
+    def test_heatmap_and_month_summary(self):
+        self.create_record(duration_minutes="120")
+        page = self.client.get("/").get_data(as_text=True)
+
+        self.assertIn("学习热力图", page)
+        self.assertIn("本月学习", page)
+        self.assertIn("活跃天数", page)
+        self.assertIn("日均时长", page)
+        self.assertIn("最佳一天", page)
+        self.assertEqual(page.count('class="heatmap-week"'), 8)
+        self.assertIn("level-4", page)
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)

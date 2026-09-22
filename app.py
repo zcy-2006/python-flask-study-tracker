@@ -404,6 +404,91 @@ def build_progress(actual, goal):
     }
 
 
+
+def get_month_summary(db, end_date, user_id):
+    month_start = end_date.replace(day=1)
+    summary_row = db.execute(
+        """
+        SELECT
+            COUNT(*) AS total_records,
+            COALESCE(SUM(duration_minutes), 0) AS total_minutes,
+            COUNT(DISTINCT study_date) AS active_days
+        FROM records
+        WHERE user_id = ? AND study_date BETWEEN ? AND ?
+        """,
+        (user_id, month_start.isoformat(), end_date.isoformat()),
+    ).fetchone()
+    summary = dict(summary_row)
+    summary["average_minutes"] = (
+        round(summary["total_minutes"] / summary["active_days"])
+        if summary["active_days"]
+        else 0
+    )
+
+    best_day = db.execute(
+        """
+        SELECT study_date, SUM(duration_minutes) AS total_minutes
+        FROM records
+        WHERE user_id = ? AND study_date BETWEEN ? AND ?
+        GROUP BY study_date
+        ORDER BY total_minutes DESC, study_date DESC
+        LIMIT 1
+        """,
+        (user_id, month_start.isoformat(), end_date.isoformat()),
+    ).fetchone()
+
+    return summary, best_day
+
+
+def build_heatmap(db, end_date, user_id, daily_goal, weeks=8):
+    current_week_start = end_date - timedelta(days=end_date.weekday())
+    start_date = current_week_start - timedelta(weeks=weeks - 1)
+    rows = db.execute(
+        """
+        SELECT study_date, COALESCE(SUM(duration_minutes), 0) AS total_minutes
+        FROM records
+        WHERE user_id = ? AND study_date BETWEEN ? AND ?
+        GROUP BY study_date
+        """,
+        (user_id, start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    minutes_by_date = {
+        row["study_date"]: row["total_minutes"]
+        for row in rows
+    }
+
+    heatmap_weeks = []
+    for week_offset in range(weeks):
+        week_start = start_date + timedelta(weeks=week_offset)
+        week = []
+        for day_offset in range(7):
+            current_date = week_start + timedelta(days=day_offset)
+            minutes = minutes_by_date.get(current_date.isoformat(), 0)
+
+            if current_date > end_date or minutes == 0:
+                level = 0
+            elif minutes < daily_goal * 0.5:
+                level = 1
+            elif minutes < daily_goal:
+                level = 2
+            elif minutes < daily_goal * 1.5:
+                level = 3
+            else:
+                level = 4
+
+            week.append(
+                {
+                    "date": current_date.isoformat(),
+                    "minutes": minutes,
+                    "level": level,
+                    "future": current_date > end_date,
+                }
+            )
+        heatmap_weeks.append(week)
+
+    return heatmap_weeks, start_date, end_date
+
+
 def calculate_streak(study_dates, today=None):
     today = today or date.today()
     valid_dates = set()
@@ -581,6 +666,13 @@ def register_routes(app):
 
         goals = get_settings(db, user_id)
         trend, max_trend_minutes = build_trend(db, today_date, user_id)
+        heatmap_weeks, heatmap_start, heatmap_end = build_heatmap(
+            db,
+            today_date,
+            user_id,
+            goals["daily_goal_minutes"],
+        )
+        month_summary, best_day = get_month_summary(db, today_date, user_id)
         daily_progress = build_progress(
             trend[-1]["minutes"], goals["daily_goal_minutes"]
         )
@@ -611,6 +703,11 @@ def register_routes(app):
             goals=goals,
             trend=trend,
             max_trend_minutes=max_trend_minutes,
+            heatmap_weeks=heatmap_weeks,
+            heatmap_start=heatmap_start.isoformat(),
+            heatmap_end=heatmap_end.isoformat(),
+            month_summary=month_summary,
+            best_day=best_day,
             daily_progress=daily_progress,
             weekly_progress=weekly_progress,
             subjects=subjects,

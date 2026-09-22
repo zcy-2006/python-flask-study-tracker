@@ -157,6 +157,79 @@
     </div>
 </div>
 
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-start gap-3 mb-4">
+            <div>
+                <h2 class="h5 mb-1">学习热力图</h2>
+                <p class="text-secondary small mb-0">{{ heatmap_start }} 至 {{ heatmap_end }}，颜色越深表示当天学习时间越长。</p>
+            </div>
+            <div class="d-flex align-items-center gap-1 small text-secondary">
+                <span>少</span>
+                <span class="heatmap-day level-0"></span>
+                <span class="heatmap-day level-1"></span>
+                <span class="heatmap-day level-2"></span>
+                <span class="heatmap-day level-3"></span>
+                <span class="heatmap-day level-4"></span>
+                <span>多</span>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-lg-3">
+                <div class="rounded-3 bg-light p-3 h-100">
+                    <div class="small text-secondary">本月学习</div>
+                    <div class="fs-4 fw-semibold">{{ month_summary.total_minutes }} 分钟</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="rounded-3 bg-light p-3 h-100">
+                    <div class="small text-secondary">活跃天数</div>
+                    <div class="fs-4 fw-semibold">{{ month_summary.active_days }} 天</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="rounded-3 bg-light p-3 h-100">
+                    <div class="small text-secondary">日均时长</div>
+                    <div class="fs-4 fw-semibold">{{ month_summary.average_minutes }} 分钟</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="rounded-3 bg-light p-3 h-100">
+                    <div class="small text-secondary">最佳一天</div>
+                    {% if best_day %}
+                        <div class="fs-5 fw-semibold">{{ best_day.total_minutes }} 分钟</div>
+                        <div class="small text-secondary">{{ best_day.study_date }}</div>
+                    {% else %}
+                        <div class="fs-5 fw-semibold">暂无</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="heatmap-layout">
+            <div class="heatmap-weekdays">
+                <span>一</span>
+                <span>二</span>
+                <span>三</span>
+                <span>四</span>
+                <span>五</span>
+                <span>六</span>
+                <span>日</span>
+            </div>
+            <div class="heatmap-weeks">
+                {% for week in heatmap_weeks %}
+                    <div class="heatmap-week">
+                        {% for day in week %}
+                            <div class="heatmap-day level-{{ day.level }} {{ 'is-future' if day.future else '' }}" title="{{ day.date }}：{{ day.minutes }} 分钟"></div>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row g-3 mb-4">
     <div class="col-12 col-lg-7">
         <div class="card border-0 shadow-sm h-100">
