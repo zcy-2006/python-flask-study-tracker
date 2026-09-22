@@ -18,6 +18,10 @@ from flask import (
 )
 
 
+
+WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
 def create_app(test_config=None):
     """Create and configure the Flask application."""
     app = Flask(__name__, instance_relative_config=True)
@@ -207,6 +211,102 @@ def calculate_streak(study_dates, today=None):
     return streak
 
 
+
+def get_settings(db):
+    setting = db.execute(
+        "SELECT * FROM settings WHERE id = 1"
+    ).fetchone()
+    if setting is None:
+        db.execute(
+            """
+            INSERT INTO settings
+                (id, daily_goal_minutes, weekly_goal_minutes)
+            VALUES (1, 60, 300)
+            """
+        )
+        db.commit()
+        setting = db.execute(
+            "SELECT * FROM settings WHERE id = 1"
+        ).fetchone()
+    return dict(setting)
+
+
+def read_settings_form(form):
+    raw_daily = form.get("daily_goal_minutes", "").strip()
+    raw_weekly = form.get("weekly_goal_minutes", "").strip()
+
+    try:
+        daily_goal = int(raw_daily)
+    except ValueError:
+        daily_goal = raw_daily
+
+    try:
+        weekly_goal = int(raw_weekly)
+    except ValueError:
+        weekly_goal = raw_weekly
+
+    return {
+        "daily_goal_minutes": daily_goal,
+        "weekly_goal_minutes": weekly_goal,
+    }
+
+
+def validate_settings(settings):
+    if not isinstance(settings["daily_goal_minutes"], int):
+        return "每日目标必须是整数。"
+    if not isinstance(settings["weekly_goal_minutes"], int):
+        return "每周目标必须是整数。"
+    if not 1 <= settings["daily_goal_minutes"] <= 1440:
+        return "每日目标必须在 1 到 1440 分钟之间。"
+    if not 1 <= settings["weekly_goal_minutes"] <= 10080:
+        return "每周目标必须在 1 到 10080 分钟之间。"
+    if settings["weekly_goal_minutes"] < settings["daily_goal_minutes"]:
+        return "每周目标不能小于每日目标。"
+    return None
+
+
+def build_trend(db, end_date, days=7):
+    start_date = end_date - timedelta(days=days - 1)
+    rows = db.execute(
+        """
+        SELECT study_date, COALESCE(SUM(duration_minutes), 0) AS total_minutes
+        FROM records
+        WHERE study_date BETWEEN ? AND ?
+        GROUP BY study_date
+        """,
+        (start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    minutes_by_date = {
+        row["study_date"]: row["total_minutes"]
+        for row in rows
+    }
+
+    trend = []
+    for offset in range(days):
+        current_date = start_date + timedelta(days=offset)
+        trend.append(
+            {
+                "date": current_date.isoformat(),
+                "label": "今天" if current_date == end_date else WEEKDAY_LABELS[current_date.weekday()],
+                "minutes": minutes_by_date.get(current_date.isoformat(), 0),
+            }
+        )
+
+    max_minutes = max([point["minutes"] for point in trend] or [0])
+    return trend, max(max_minutes, 1)
+
+
+def build_progress(actual, goal):
+    percent = round(actual * 100 / goal) if goal else 0
+    return {
+        "actual": actual,
+        "goal": goal,
+        "percent": percent,
+        "bar_percent": min(percent, 100),
+        "remaining": max(goal - actual, 0),
+    }
+
+
 def register_routes(app):
     @app.get("/")
     def index():
@@ -286,6 +386,15 @@ def register_routes(app):
             subject_stats[0]["total_minutes"] if subject_stats else 0
         )
 
+        goals = get_settings(db)
+        trend, max_trend_minutes = build_trend(db, today_date)
+        daily_progress = build_progress(
+            trend[-1]["minutes"], goals["daily_goal_minutes"]
+        )
+        weekly_progress = build_progress(
+            week_summary["total_minutes"], goals["weekly_goal_minutes"]
+        )
+
         subjects = db.execute(
             """
             SELECT DISTINCT subject
@@ -305,6 +414,11 @@ def register_routes(app):
             streak=streak,
             subject_stats=subject_stats,
             max_subject_minutes=max_subject_minutes,
+            goals=goals,
+            trend=trend,
+            max_trend_minutes=max_trend_minutes,
+            daily_progress=daily_progress,
+            weekly_progress=weekly_progress,
             subjects=subjects,
             filters=filters,
             has_filters=any(filters.values()),
@@ -463,6 +577,37 @@ def register_routes(app):
                 "Content-Disposition": "attachment; filename=study-records.csv"
             },
         )
+
+    @app.route("/settings", methods=("GET", "POST"))
+    def settings_page():
+        db = get_db()
+        settings_data = get_settings(db)
+
+        if request.method == "POST":
+            settings_data = read_settings_form(request.form)
+            error = validate_settings(settings_data)
+
+            if error is None:
+                db.execute(
+                    """
+                    UPDATE settings
+                    SET daily_goal_minutes = ?,
+                        weekly_goal_minutes = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                    """,
+                    (
+                        settings_data["daily_goal_minutes"],
+                        settings_data["weekly_goal_minutes"],
+                    ),
+                )
+                db.commit()
+                flash("学习目标已更新。", "success")
+                return redirect(url_for("settings_page"))
+
+            flash(error, "error")
+
+        return render_template("settings.html", settings=settings_data)
 
     @app.get("/health")
     def health():

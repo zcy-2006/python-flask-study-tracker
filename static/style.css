@@ -30,3 +30,53 @@ body {
         font-size: 1.8rem;
     }
 }
+
+.goal-summary {
+    font-size: 1.4rem;
+    font-weight: 600;
+}
+
+.trend-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    min-height: 190px;
+}
+
+.trend-column {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+.trend-bar-track {
+    display: flex;
+    align-items: flex-end;
+    height: 120px;
+    margin: 0.35rem 0;
+    overflow: hidden;
+    border-radius: 0.65rem;
+    background: #edf2f7;
+}
+
+.trend-bar {
+    width: 100%;
+    min-height: 0.25rem;
+    border-radius: 0.65rem;
+    background: linear-gradient(180deg, #4dabf7, #0d6efd);
+    transition: height 180ms ease;
+}
+
+.trend-bar.is-today {
+    background: linear-gradient(180deg, #20c997, #0f9f78);
+}
+
+@media (max-width: 575.98px) {
+    .trend-chart {
+        gap: 0.35rem;
+    }
+
+    .trend-bar-track {
+        height: 90px;
+    }
+}

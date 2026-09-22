@@ -88,6 +88,76 @@
 </div>
 
 <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                    <div>
+                        <h2 class="h5 mb-1">今日目标</h2>
+                        <p class="text-secondary small mb-0">目标 {{ daily_progress.goal }} 分钟</p>
+                    </div>
+                    <span class="badge {{ 'text-bg-success' if daily_progress.percent >= 100 else 'text-bg-primary' }}">{{ daily_progress.percent }}%</span>
+                </div>
+                <p class="goal-summary mb-2">{{ daily_progress.actual }} / {{ daily_progress.goal }} 分钟</p>
+                <div class="progress mb-2" style="height: 0.7rem;">
+                    <div class="progress-bar {{ 'bg-success' if daily_progress.percent >= 100 else '' }}" role="progressbar" style="width: {{ daily_progress.bar_percent }}%"></div>
+                </div>
+                {% if daily_progress.remaining %}
+                    <p class="text-secondary small mb-0">还差 {{ daily_progress.remaining }} 分钟完成今日目标。</p>
+                {% else %}
+                    <p class="text-success small mb-0">今日目标已完成。</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                    <div>
+                        <h2 class="h5 mb-1">本周目标</h2>
+                        <p class="text-secondary small mb-0">目标 {{ weekly_progress.goal }} 分钟</p>
+                    </div>
+                    <span class="badge {{ 'text-bg-success' if weekly_progress.percent >= 100 else 'text-bg-primary' }}">{{ weekly_progress.percent }}%</span>
+                </div>
+                <p class="goal-summary mb-2">{{ weekly_progress.actual }} / {{ weekly_progress.goal }} 分钟</p>
+                <div class="progress mb-2" style="height: 0.7rem;">
+                    <div class="progress-bar {{ 'bg-success' if weekly_progress.percent >= 100 else '' }}" role="progressbar" style="width: {{ weekly_progress.bar_percent }}%"></div>
+                </div>
+                {% if weekly_progress.remaining %}
+                    <p class="text-secondary small mb-0">还差 {{ weekly_progress.remaining }} 分钟完成本周目标。</p>
+                {% else %}
+                    <p class="text-success small mb-0">本周目标已完成。</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
+            <div>
+                <h2 class="h5 mb-1">近 7 天趋势</h2>
+                <p class="text-secondary small mb-0">每天的学习时长，柱状高度按最长的一天计算。</p>
+            </div>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('settings_page') }}">调整目标</a>
+        </div>
+        <div class="trend-chart">
+            {% for point in trend %}
+                <div class="trend-column">
+                    <div class="small fw-semibold">{{ point.minutes }}</div>
+                    <div class="trend-bar-track">
+                        <div class="trend-bar {{ 'is-today' if point.label == '今天' else '' }}" style="height: {{ (point.minutes * 100 / max_trend_minutes)|round(0, 'floor') }}%;" title="{{ point.date }}：{{ point.minutes }} 分钟"></div>
+                    </div>
+                    <div class="small {{ 'text-success fw-semibold' if point.label == '今天' else 'text-secondary' }}">{{ point.label }}</div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
     <div class="col-12 col-lg-7">
         <div class="card border-0 shadow-sm h-100">
             <div class="card-body">

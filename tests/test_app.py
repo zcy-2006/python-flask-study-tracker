@@ -146,6 +146,49 @@ class StudyTrackerTestCase(unittest.TestCase):
         ]
         self.assertEqual(calculate_streak(study_dates, today), 3)
 
+    def test_settings_page_defaults(self):
+        response = self.client.get("/settings")
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("每日学习目标", page)
+        self.assertIn('value="60"', page)
+        self.assertIn('value="300"', page)
+
+    def test_update_settings(self):
+        response = self.client.post(
+            "/settings",
+            data={
+                "daily_goal_minutes": "90",
+                "weekly_goal_minutes": "450",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("学习目标已更新", response.get_data(as_text=True))
+
+    def test_invalid_settings(self):
+        response = self.client.post(
+            "/settings",
+            data={
+                "daily_goal_minutes": "0",
+                "weekly_goal_minutes": "100",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("每日目标必须在 1 到 1440 分钟之间", response.get_data(as_text=True))
+
+    def test_dashboard_shows_goals_and_trend(self):
+        self.create_record()
+        page = self.client.get("/").get_data(as_text=True)
+
+        self.assertIn("今日目标", page)
+        self.assertIn("本周目标", page)
+        self.assertIn("近 7 天趋势", page)
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)

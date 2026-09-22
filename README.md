@@ -12,6 +12,8 @@
 - 显示记录数、总学习时长和完成率
 - 显示本周学习统计
 - 计算连续记录天数
+- 设置每日和每周学习目标
+- 显示近 7 天学习时长趋势
 - 展示科目学习时长分布
 - 导出 CSV 文件
 - 使用 SQLite 持久化数据
@@ -58,6 +60,7 @@ http://127.0.0.1:5000
 | `/?date=2026-09-22` | 按日期筛选 |
 | `/?subject=Python%20Web` | 按科目筛选 |
 | `/export.csv` | 导出当前筛选结果为 CSV |
+| `/settings` | 设置每日和每周目标 |
 | `/records/new` | 新增记录 |
 | `/records/<id>/edit` | 编辑记录 |
 | `/health` | 健康检查 |
@@ -72,7 +75,8 @@ python-flask-study-tracker/
 ├── templates/
 │   ├── base.html
 │   ├── form.html
-│   └── index.html
+│   ├── index.html
+│   └── settings.html
 ├── static/
 │   └── style.css
 ├── tests/
