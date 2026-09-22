@@ -11,6 +11,9 @@
 - CSRF 防护和安全响应头
 - 记录注册、登录、数据修改和管理操作日志
 - 15 分钟内连续 5 次登录失败后自动限流
+- 管理员可以生成用户临时密码
+- GitHub Actions 自动测试
+- CSP 内容安全策略
 - 每个用户拥有独立的学习记录和目标
 - 查看全部学习记录
 - 按日期、科目筛选记录
@@ -149,3 +152,18 @@ SESSION_COOKIE_SECURE=1
 ```
 
 SQLite 必须放在持久化磁盘中，否则重新部署可能造成数据丢失。
+
+
+## 维护命令
+
+创建数据库备份：
+
+```powershell
+.\.venv\Scripts\python.exe -m flask --app app backup-db
+```
+
+清理 1 天前的登录失败记录和 90 天前的审计日志：
+
+```powershell
+.\.venv\Scripts\python.exe -m flask --app app cleanup-data
+```

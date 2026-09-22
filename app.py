@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
 from functools import wraps
@@ -87,6 +88,10 @@ def register_security_headers(app):
         response.headers.setdefault(
             "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
         )
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        )
         return response
 
 
@@ -113,6 +118,7 @@ def create_app(test_config=None):
     login_manager.init_app(app)
     register_security_headers(app)
     register_database(app)
+    register_cli(app)
     register_routes(app)
     return app
 
@@ -813,6 +819,41 @@ def clear_login_failures(db, username):
         (username, get_client_ip()),
     )
     db.commit()
+
+
+
+def register_cli(app):
+    @app.cli.command("backup-db")
+    def backup_db():
+        """Create a timestamped SQLite backup."""
+        import click
+
+        database = current_app.config["DATABASE"]
+        if not os.path.exists(database):
+            raise click.ClickException("Database file does not exist.")
+        backup_dir = os.path.join(current_app.instance_path, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = os.path.join(backup_dir, "study-tracker-%s.sqlite" % stamp)
+        shutil.copy2(database, target)
+        click.echo("Backup created: " + target)
+
+    @app.cli.command("cleanup-data")
+    def cleanup_data():
+        """Remove stale login failures and old audit logs."""
+        import click
+
+        db = get_db()
+        cutoff = (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+        attempts = db.execute(
+            "DELETE FROM login_attempts WHERE attempted_at < ?",
+            ((datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),),
+        ).rowcount
+        logs = db.execute(
+            "DELETE FROM audit_logs WHERE created_at < ?", (cutoff,)
+        ).rowcount
+        db.commit()
+        click.echo("Cleaned login attempts: %d; audit logs: %d" % (attempts, logs))
 
 
 def register_routes(app):
@@ -1635,6 +1676,32 @@ def register_routes(app):
             users=users,
             recent_events=recent_events,
         )
+
+    @app.post("/admin/users/<int:user_id>/reset-password")
+    @admin_required
+    def admin_reset_password(user_id):
+        db = get_db()
+        target = db.execute(
+            "SELECT id, username FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if target is None:
+            abort(404)
+        temporary_password = secrets.token_urlsafe(9)
+        db.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(temporary_password), user_id),
+        )
+        db.commit()
+        log_event(
+            db,
+            "admin.password_reset",
+            "重置用户密码：" + target["username"],
+        )
+        flash(
+            "用户 %s 的临时密码：%s" % (target["username"], temporary_password),
+            "warning",
+        )
+        return redirect(url_for("admin_page"))
 
     @app.get("/health")
     def health():

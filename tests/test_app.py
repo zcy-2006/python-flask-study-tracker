@@ -1,12 +1,13 @@
 import io
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
 from datetime import date, timedelta
 
-from app import calculate_streak, create_app
+from app import calculate_streak, create_app, create_user
 
 
 class StudyTrackerTestCase(unittest.TestCase):
@@ -523,6 +524,29 @@ class StudyTrackerTestCase(unittest.TestCase):
         )
         self.assertIn("账号已注销", response.get_data(as_text=True))
         self.assertIn("欢迎回来", response.get_data(as_text=True))
+
+    def test_admin_can_reset_user_password(self):
+        with self.app.app_context():
+            create_user("reset-user", "old-password")
+        response = self.client.post(
+            "/admin/users/2/reset-password",
+            follow_redirects=True,
+        )
+        match = re.search(r"临时密码：([A-Za-z0-9_-]+)", response.get_data(as_text=True))
+        self.assertIsNotNone(match)
+        temporary_password = match.group(1)
+
+        self.client.post("/logout")
+        login_response = self.client.post(
+            "/login",
+            data={"username": "reset-user", "password": temporary_password},
+            follow_redirects=True,
+        )
+        self.assertIn("登录成功", login_response.get_data(as_text=True))
+
+    def test_content_security_policy(self):
+        response = self.client.get("/health")
+        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
 
     def test_health(self):
         response = self.client.get("/health")

@@ -87,6 +87,10 @@
                             </td>
                             <td class="text-end">
                                 {% if user.id|string != current_user.id %}
+                                    <form class="d-inline" method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}" data-confirm="确定生成新的临时密码吗？">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="btn btn-sm btn-outline-secondary" type="submit">重置密码</button>
+                                    </form>
                                     <form class="d-inline" method="post">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="action" value="toggle_enabled">
