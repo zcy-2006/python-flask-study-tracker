@@ -5,6 +5,8 @@
 ## 功能
 
 - 用户注册、登录和退出
+- 第一个用户自动成为管理员
+- 管理员后台可关闭注册、设置邀请码和管理用户权限
 - 查看账户信息并修改密码
 - CSRF 防护和安全响应头
 - 每个用户拥有独立的学习记录和目标
@@ -69,8 +71,9 @@ http://127.0.0.1:5000
 
 | 地址 | 说明 |
 | --- | --- |
-| `/register` | 注册账号 |
+| `/register` | 注册账号，可启用邀请码 |
 | `/account` | 查看账户信息、修改密码 |
+| `/admin` | 管理员后台 |
 | `/login` | 登录 |
 | `/logout` | 退出登录，仅支持 POST |
 | `/` | 学习记录列表和统计面板 |
@@ -95,6 +98,7 @@ python-flask-study-tracker/
 ├── templates/
 │   ├── base.html
 │   ├── account.html
+│   ├── admin.html
 │   ├── form.html
 │   ├── index.html
 │   ├── login.html
@@ -124,3 +128,22 @@ git push
 - 标签管理
 - 学习目标与提醒
 - 部署到 PythonAnywhere、Render 或其他云平台
+
+
+## 生产部署
+
+项目已经提供以下生产部署文件：
+
+- `wsgi.py`：PythonAnywhere、Gunicorn 等 WSGI 服务入口
+- `requirements-prod.txt`：Gunicorn 和 Waitress 生产服务器
+- `Procfile`：Render、Railway 等平台启动命令
+- `.env.example`：生产环境变量示例
+
+部署时务必设置安全的环境变量：
+
+```text
+SECRET_KEY=一段足够长的随机字符串
+SESSION_COOKIE_SECURE=1
+```
+
+SQLite 必须放在持久化磁盘中，否则重新部署可能造成数据丢失。

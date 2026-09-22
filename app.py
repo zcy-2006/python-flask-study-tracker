@@ -3,8 +3,10 @@ import io
 import json
 import os
 import re
+import secrets
 import sqlite3
 from datetime import date, datetime, timedelta
+from functools import wraps
 
 from flask import (
     Flask,
@@ -41,21 +43,31 @@ login_manager.login_message_category = "warning"
 
 
 class User(UserMixin):
-    def __init__(self, user_id, username, password_hash=None):
+    def __init__(self, user_id, username, password_hash=None, is_admin=0):
         self.id = str(user_id)
         self.username = username
         self.password_hash = password_hash
+        self.is_admin = bool(is_admin)
 
 
 @login_manager.user_loader
 def load_user(user_id):
     row = get_db().execute(
-        "SELECT id, username, password_hash FROM users WHERE id = ?",
+        """
+        SELECT id, username, password_hash, is_admin
+        FROM users
+        WHERE id = ?
+        """,
         (user_id,),
     ).fetchone()
     if row is None:
         return None
-    return User(row["id"], row["username"], row["password_hash"])
+    return User(
+        row["id"],
+        row["username"],
+        row["password_hash"],
+        row["is_admin"],
+    )
 
 
 def register_security_headers(app):
@@ -145,6 +157,15 @@ def migrate_db(db):
     if "tags" not in columns:
         db.execute(
             "ALTER TABLE records ADD COLUMN tags TEXT NOT NULL DEFAULT ''"
+        )
+
+    user_columns = {
+        row["name"]
+        for row in db.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "is_admin" not in user_columns:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
         )
 
     db.execute(
@@ -243,8 +264,11 @@ def create_user(username, password):
     ] == 0
 
     cursor = db.execute(
-        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-        (username, generate_password_hash(password)),
+        """
+        INSERT INTO users (username, password_hash, is_admin)
+        VALUES (?, ?, ?)
+        """,
+        (username, generate_password_hash(password), 1 if is_first_user else 0),
     )
     user_id = cursor.lastrowid
 
@@ -681,11 +705,66 @@ def parse_backup_payload(payload):
     return settings_data, records
 
 
+
+def get_app_settings(db):
+    setting = db.execute(
+        "SELECT * FROM app_settings WHERE id = 1"
+    ).fetchone()
+    if setting is None:
+        db.execute(
+            """
+            INSERT INTO app_settings
+                (id, registration_enabled, registration_invite_code)
+            VALUES (1, 1, '')
+            """
+        )
+        db.commit()
+        setting = db.execute(
+            "SELECT * FROM app_settings WHERE id = 1"
+        ).fetchone()
+    return dict(setting)
+
+
+def read_app_settings_form(form):
+    invite_code = form.get("registration_invite_code", "").strip()
+    return {
+        "registration_enabled": 1
+        if form.get("registration_enabled") == "1"
+        else 0,
+        "registration_invite_code": invite_code,
+    }
+
+
+def validate_app_settings(settings_data):
+    if len(settings_data["registration_invite_code"]) > 50:
+        return "邀请码不能超过 50 个字符。"
+    return None
+
+
+def admin_required(view):
+    @wraps(view)
+    @login_required
+    def wrapped(*args, **kwargs):
+        if not current_user.is_admin:
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def register_routes(app):
     @app.route("/register", methods=("GET", "POST"))
     def register():
         if current_user.is_authenticated:
             return redirect(url_for("index"))
+
+        db = get_db()
+        registration_settings = get_app_settings(db)
+        user_count = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        registration_closed = user_count > 0 and not registration_settings["registration_enabled"]
+        invite_required = user_count > 0 and bool(registration_settings["registration_invite_code"])
+        if registration_closed:
+            return render_template("register.html", registration_closed=True, invite_required=invite_required)
 
         username = ""
         error = None
@@ -693,22 +772,21 @@ def register_routes(app):
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "")
             confirm_password = request.form.get("confirm_password", "")
+            invite_code = request.form.get("invite_code", "").strip()
             error = validate_registration(username, password, confirm_password)
-
+            if error is None and invite_required and not secrets.compare_digest(invite_code, registration_settings["registration_invite_code"]):
+                error = "邀请码不正确。"
             if error is None:
                 try:
                     user = create_user(username, password)
                     login_user(user)
                 except sqlite3.IntegrityError:
                     error = "该用户名已经被注册。"
-
                 if error is None:
                     flash("注册成功，欢迎开始学习。", "success")
                     return redirect(url_for("index"))
-
             flash(error, "error")
-
-        return render_template("register.html", username=username)
+        return render_template("register.html", username=username, registration_closed=False, invite_required=invite_required)
 
     @app.route("/login", methods=("GET", "POST"))
     def login():
@@ -721,7 +799,7 @@ def register_routes(app):
             password = request.form.get("password", "")
             row = get_db().execute(
                 """
-                SELECT id, username, password_hash
+                SELECT id, username, password_hash, is_admin
                 FROM users
                 WHERE username = ?
                 """,
@@ -732,7 +810,12 @@ def register_routes(app):
                 row["password_hash"], password
             ):
                 login_user(
-                    User(row["id"], row["username"], row["password_hash"]),
+                    User(
+                        row["id"],
+                        row["username"],
+                        row["password_hash"],
+                        row["is_admin"],
+                    ),
                     remember=request.form.get("remember") == "1",
                 )
                 flash("登录成功。", "success")
@@ -1265,6 +1348,97 @@ def register_routes(app):
             "success",
         )
         return redirect(url_for("account_page"))
+
+    @app.route("/admin", methods=("GET", "POST"))
+    @admin_required
+    def admin_page():
+        db = get_db()
+        app_settings = get_app_settings(db)
+
+        if request.method == "POST":
+            action = request.form.get("action", "settings")
+
+            if action == "settings":
+                app_settings = read_app_settings_form(request.form)
+                error = validate_app_settings(app_settings)
+                if error is None:
+                    db.execute(
+                        """
+                        UPDATE app_settings
+                        SET registration_enabled = ?,
+                            registration_invite_code = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = 1
+                        """,
+                        (
+                            app_settings["registration_enabled"],
+                            app_settings["registration_invite_code"],
+                        ),
+                    )
+                    db.commit()
+                    flash("注册设置已更新。", "success")
+                    return redirect(url_for("admin_page"))
+                flash(error, "error")
+
+            elif action == "toggle_admin":
+                try:
+                    target_id = int(request.form.get("user_id", ""))
+                except (TypeError, ValueError):
+                    target_id = 0
+
+                target = db.execute(
+                    "SELECT id, username, is_admin FROM users WHERE id = ?",
+                    (target_id,),
+                ).fetchone()
+                if target is None:
+                    flash("用户不存在。", "error")
+                elif str(target["id"]) == str(current_user.id):
+                    flash("不能修改自己的管理员状态。", "error")
+                else:
+                    new_admin = 0 if target["is_admin"] else 1
+                    if not new_admin:
+                        admin_count = db.execute(
+                            "SELECT COUNT(*) AS count FROM users WHERE is_admin = 1"
+                        ).fetchone()["count"]
+                        if admin_count <= 1:
+                            flash("至少需要保留一名管理员。", "error")
+                        else:
+                            db.execute(
+                                "UPDATE users SET is_admin = 0 WHERE id = ?",
+                                (target_id,),
+                            )
+                            db.commit()
+                            flash("用户管理员权限已取消。", "success")
+                    else:
+                        db.execute(
+                            "UPDATE users SET is_admin = 1 WHERE id = ?",
+                            (target_id,),
+                        )
+                        db.commit()
+                        flash("用户已设为管理员。", "success")
+                return redirect(url_for("admin_page"))
+
+        users = db.execute(
+            """
+            SELECT
+                users.id,
+                users.username,
+                users.is_admin,
+                users.created_at,
+                COUNT(records.id) AS total_records,
+                COALESCE(SUM(records.duration_minutes), 0) AS total_minutes
+            FROM users
+            LEFT JOIN records ON records.user_id = users.id
+            GROUP BY users.id
+            ORDER BY users.id
+            """
+        ).fetchall()
+
+        return render_template(
+            "admin.html",
+            app_settings=app_settings,
+            users=users,
+        )
 
     @app.get("/health")
     def health():

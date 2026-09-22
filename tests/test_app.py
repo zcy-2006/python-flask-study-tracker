@@ -421,6 +421,69 @@ class StudyTrackerTestCase(unittest.TestCase):
 
         self.assertIn("这不是学习打卡网站的备份文件", response.get_data(as_text=True))
 
+    def test_first_user_is_admin(self):
+        response = self.client.get("/admin")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("管理员后台", response.get_data(as_text=True))
+
+    def test_admin_can_close_registration(self):
+        response = self.client.post(
+            "/admin",
+            data={
+                "action": "settings",
+                "registration_enabled": "0",
+                "registration_invite_code": "",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("注册设置已更新", response.get_data(as_text=True))
+
+        self.client.post("/logout")
+        register_page = self.client.get("/register").get_data(as_text=True)
+        self.assertIn("注册已关闭", register_page)
+
+    def test_registration_invite_code(self):
+        self.client.post(
+            "/admin",
+            data={
+                "action": "settings",
+                "registration_enabled": "1",
+                "registration_invite_code": "hello-code",
+            },
+            follow_redirects=True,
+        )
+        self.client.post("/logout")
+
+        wrong = self.client.post(
+            "/register",
+            data={
+                "username": "invited-user",
+                "password": "password-123",
+                "confirm_password": "password-123",
+                "invite_code": "wrong",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("邀请码不正确", wrong.get_data(as_text=True))
+
+        right = self.client.post(
+            "/register",
+            data={
+                "username": "invited-user",
+                "password": "password-123",
+                "confirm_password": "password-123",
+                "invite_code": "hello-code",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("注册成功", right.get_data(as_text=True))
+
+    def test_normal_user_cannot_access_admin(self):
+        self.client.post("/logout")
+        self.register_user(username="normal-user")
+        response = self.client.get("/admin")
+        self.assertEqual(response.status_code, 403)
+
     def test_health(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)

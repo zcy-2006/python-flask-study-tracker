@@ -3,6 +3,15 @@
 {% block title %}注册 | 学习打卡{% endblock %}
 
 {% block content %}
+{% if registration_closed %}
+<div class="card border-0 shadow-sm">
+    <div class="card-body py-5 text-center">
+        <h2 class="h5">注册已关闭</h2>
+        <p class="text-secondary mb-3">管理员暂时关闭了新用户注册。</p>
+        <a class="btn btn-outline-primary" href="{{ url_for('login') }}">返回登录</a>
+    </div>
+</div>
+{% else %}
 <div class="row justify-content-center">
     <div class="col-12 col-md-8 col-lg-5">
         <div class="text-center mb-4">
@@ -27,6 +36,12 @@
                     <label class="form-label" for="confirm_password">确认密码</label>
                     <input class="form-control" id="confirm_password" name="confirm_password" type="password" minlength="8" maxlength="128" required>
                 </div>
+                {% if invite_required %}
+                <div class="mb-3">
+                    <label class="form-label" for="invite_code">注册邀请码</label>
+                    <input class="form-control" id="invite_code" name="invite_code" type="text" maxlength="50" required>
+                </div>
+                {% endif %}
             </div>
             <div class="card-footer bg-white p-3">
                 <button class="btn btn-primary w-100" type="submit">注册并开始学习</button>
@@ -38,4 +53,5 @@
         </p>
     </div>
 </div>
+{% endif %}
 {% endblock %}

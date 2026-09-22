@@ -18,6 +18,7 @@
                     <a class="nav-link" href="{{ url_for('new_record') }}">新增记录</a>
                     <a class="nav-link" href="{{ url_for('settings_page') }}">目标设置</a>
                     <a class="nav-link" href="{{ url_for('account_page') }}">账户</a>
+                    {% if current_user.is_admin %}<a class="nav-link" href="{{ url_for('admin_page') }}">后台</a>{% endif %}
                     <form class="d-inline" method="post" action="{{ url_for('logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="nav-link btn btn-link" type="submit">退出登录</button>

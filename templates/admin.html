@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}管理员后台 | 学习打卡{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 mb-1">管理员后台</h1>
+        <p class="text-secondary mb-0">管理注册策略和用户权限。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">返回首页</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-12 col-lg-6">
+        <form class="card border-0 shadow-sm h-100" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="settings">
+            <div class="card-body p-4">
+                <h2 class="h5 mb-3">注册设置</h2>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" id="registration_enabled" name="registration_enabled" type="checkbox" value="1" {% if app_settings.registration_enabled %}checked{% endif %}>
+                    <label class="form-check-label" for="registration_enabled">允许新用户注册</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="registration_invite_code">注册邀请码</label>
+                    <input class="form-control" id="registration_invite_code" name="registration_invite_code" type="text" maxlength="50" value="{{ app_settings.registration_invite_code }}">
+                    <div class="form-text">留空表示不需要邀请码。</div>
+                </div>
+            </div>
+            <div class="card-footer bg-white p-3 text-end">
+                <button class="btn btn-primary" type="submit">保存注册设置</button>
+            </div>
+        </form>
+    </div>
+    <div class="col-12 col-lg-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <h2 class="h5 mb-3">说明</h2>
+                <ul class="text-secondary mb-0">
+                    <li>第一个注册用户自动成为管理员。</li>
+                    <li>关闭注册后，已有用户可以继续登录。</li>
+                    <li>设置邀请码后，新用户必须填写正确邀请码。</li>
+                    <li>不能取消自己的管理员权限。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-4">
+        <h2 class="h5 mb-3">用户列表</h2>
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>用户名</th>
+                        <th>注册时间</th>
+                        <th>记录数</th>
+                        <th>学习时长</th>
+                        <th>角色</th>
+                        <th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                        <tr>
+                            <td class="fw-semibold">{{ user.username }}</td>
+                            <td class="text-nowrap">{{ user.created_at }}</td>
+                            <td>{{ user.total_records }}</td>
+                            <td>{{ user.total_minutes }} 分钟</td>
+                            <td>
+                                {% if user.is_admin %}
+                                    <span class="badge text-bg-primary">管理员</span>
+                                {% else %}
+                                    <span class="badge text-bg-secondary">普通用户</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if user.id|string != current_user.id %}
+                                    <form class="d-inline" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="action" value="toggle_admin">
+                                        <input type="hidden" name="user_id" value="{{ user.id }}">
+                                        <button class="btn btn-sm {{ 'btn-outline-danger' if user.is_admin else 'btn-outline-primary' }}" type="submit">
+                                            {{ '取消管理员' if user.is_admin else '设为管理员' }}
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <span class="text-secondary small">当前账号</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
