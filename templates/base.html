@@ -11,10 +11,19 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
         <div class="container">
             <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">学习打卡</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="{{ url_for('index') }}">全部记录</a>
-                <a class="nav-link" href="{{ url_for('new_record') }}">新增记录</a>
-                <a class="nav-link" href="{{ url_for('settings_page') }}">目标设置</a>
+            <div class="navbar-nav ms-auto align-items-lg-center">
+                {% if current_user.is_authenticated %}
+                    <span class="navbar-text me-lg-3">你好，{{ current_user.username }}</span>
+                    <a class="nav-link" href="{{ url_for('index') }}">全部记录</a>
+                    <a class="nav-link" href="{{ url_for('new_record') }}">新增记录</a>
+                    <a class="nav-link" href="{{ url_for('settings_page') }}">目标设置</a>
+                    <form class="d-inline" method="post" action="{{ url_for('logout') }}">
+                        <button class="nav-link btn btn-link" type="submit">退出登录</button>
+                    </form>
+                {% else %}
+                    <a class="nav-link" href="{{ url_for('login') }}">登录</a>
+                    <a class="nav-link" href="{{ url_for('register') }}">注册</a>
+                {% endif %}
             </div>
         </div>
     </nav>

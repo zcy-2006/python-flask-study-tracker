@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
@@ -16,10 +17,40 @@ from flask import (
     request,
     url_for,
 )
-
-
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+login_manager = LoginManager()
+login_manager.login_view = "login"
+login_manager.login_message = "请先登录后再使用学习打卡。"
+login_manager.login_message_category = "warning"
+
+
+class User(UserMixin):
+    def __init__(self, user_id, username, password_hash=None):
+        self.id = str(user_id)
+        self.username = username
+        self.password_hash = password_hash
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    row = get_db().execute(
+        "SELECT id, username, password_hash FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return User(row["id"], row["username"], row["password_hash"])
 
 
 def create_app(test_config=None):
@@ -35,6 +66,7 @@ def create_app(test_config=None):
 
     os.makedirs(app.instance_path, exist_ok=True)
 
+    login_manager.init_app(app)
     register_database(app)
     register_routes(app)
     return app
@@ -55,6 +87,7 @@ def get_db():
             detect_types=sqlite3.PARSE_DECLTYPES,
         )
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
 
 
@@ -68,6 +101,27 @@ def init_db():
     db = get_db()
     with current_app.open_resource("schema.sql") as schema_file:
         db.executescript(schema_file.read().decode("utf-8"))
+    migrate_db(db)
+
+
+def migrate_db(db):
+    columns = {
+        row["name"]
+        for row in db.execute("PRAGMA table_info(records)").fetchall()
+    }
+
+    if "user_id" not in columns:
+        db.execute(
+            "ALTER TABLE records ADD COLUMN user_id INTEGER REFERENCES users(id)"
+        )
+
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_records_user_date
+        ON records (user_id, study_date DESC)
+        """
+    )
+    db.commit()
 
 
 def blank_record():
@@ -116,6 +170,69 @@ def validate_record(record):
     return None
 
 
+def validate_registration(username, password, confirm_password):
+    if not username:
+        return "请填写用户名。"
+    if len(username) < 3 or len(username) > 30:
+        return "用户名长度必须在 3 到 30 个字符之间。"
+    if not re.fullmatch(r"[A-Za-z0-9_\-\u4e00-\u9fff]{3,30}", username):
+        return "用户名只能包含中文、字母、数字、下划线或连字符。"
+    if len(password) < 8:
+        return "密码至少需要 8 个字符。"
+    if len(password) > 128:
+        return "密码不能超过 128 个字符。"
+    if password != confirm_password:
+        return "两次输入的密码不一致。"
+    return None
+
+
+def create_user(username, password):
+    db = get_db()
+    is_first_user = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()[
+        "count"
+    ] == 0
+
+    cursor = db.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        (username, generate_password_hash(password)),
+    )
+    user_id = cursor.lastrowid
+
+    daily_goal = 60
+    weekly_goal = 300
+    if is_first_user:
+        legacy_table = db.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'settings'
+            """
+        ).fetchone()
+        if legacy_table is not None:
+            legacy_settings = db.execute(
+                "SELECT * FROM settings WHERE id = 1"
+            ).fetchone()
+            if legacy_settings is not None:
+                daily_goal = legacy_settings["daily_goal_minutes"]
+                weekly_goal = legacy_settings["weekly_goal_minutes"]
+
+        db.execute(
+            "UPDATE records SET user_id = ? WHERE user_id IS NULL",
+            (user_id,),
+        )
+
+    db.execute(
+        """
+        INSERT INTO user_settings
+            (user_id, daily_goal_minutes, weekly_goal_minutes)
+        VALUES (?, ?, ?)
+        """,
+        (user_id, daily_goal, weekly_goal),
+    )
+    db.commit()
+    return load_user(user_id)
+
+
 def is_valid_date(value):
     try:
         datetime.strptime(value, "%Y-%m-%d")
@@ -141,9 +258,9 @@ def read_filters(args):
     return filters, invalid_date
 
 
-def build_record_query(filters):
-    conditions = []
-    params = []
+def build_record_query(filters, user_id):
+    conditions = ["user_id = ?"]
+    params = [user_id]
 
     if filters["date"]:
         conditions.append("study_date = ?")
@@ -166,11 +283,7 @@ def build_record_query(filters):
         conditions.append("subject = ?")
         params.append(filters["subject"])
 
-    where_clause = ""
-    if conditions:
-        where_clause = " WHERE " + " AND ".join(conditions)
-
-    return where_clause, params
+    return " WHERE " + " AND ".join(conditions), params
 
 
 def filter_redirect_args(filters):
@@ -183,50 +296,32 @@ def filter_redirect_args(filters):
 
 def get_record_or_404(record_id):
     record = get_db().execute(
-        "SELECT * FROM records WHERE id = ?", (record_id,)
+        "SELECT * FROM records WHERE id = ? AND user_id = ?",
+        (record_id, current_user.id),
     ).fetchone()
     if record is None:
         abort(404)
     return record
 
 
-def calculate_streak(study_dates, today=None):
-    today = today or date.today()
-    valid_dates = set()
-
-    for value in study_dates:
-        try:
-            valid_dates.add(datetime.strptime(value, "%Y-%m-%d").date())
-        except (TypeError, ValueError):
-            continue
-
-    if not valid_dates:
-        return 0
-
-    cursor = today if today in valid_dates else today - timedelta(days=1)
-    streak = 0
-    while cursor in valid_dates:
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
-
-
-
-def get_settings(db):
+def get_settings(db, user_id):
     setting = db.execute(
-        "SELECT * FROM settings WHERE id = 1"
+        "SELECT * FROM user_settings WHERE user_id = ?",
+        (user_id,),
     ).fetchone()
     if setting is None:
         db.execute(
             """
-            INSERT INTO settings
-                (id, daily_goal_minutes, weekly_goal_minutes)
-            VALUES (1, 60, 300)
-            """
+            INSERT INTO user_settings
+                (user_id, daily_goal_minutes, weekly_goal_minutes)
+            VALUES (?, 60, 300)
+            """,
+            (user_id,),
         )
         db.commit()
         setting = db.execute(
-            "SELECT * FROM settings WHERE id = 1"
+            "SELECT * FROM user_settings WHERE user_id = ?",
+            (user_id,),
         ).fetchone()
     return dict(setting)
 
@@ -265,16 +360,16 @@ def validate_settings(settings):
     return None
 
 
-def build_trend(db, end_date, days=7):
+def build_trend(db, end_date, user_id, days=7):
     start_date = end_date - timedelta(days=days - 1)
     rows = db.execute(
         """
         SELECT study_date, COALESCE(SUM(duration_minutes), 0) AS total_minutes
         FROM records
-        WHERE study_date BETWEEN ? AND ?
+        WHERE user_id = ? AND study_date BETWEEN ? AND ?
         GROUP BY study_date
         """,
-        (start_date.isoformat(), end_date.isoformat()),
+        (user_id, start_date.isoformat(), end_date.isoformat()),
     ).fetchall()
     minutes_by_date = {
         row["study_date"]: row["total_minutes"]
@@ -287,7 +382,9 @@ def build_trend(db, end_date, days=7):
         trend.append(
             {
                 "date": current_date.isoformat(),
-                "label": "今天" if current_date == end_date else WEEKDAY_LABELS[current_date.weekday()],
+                "label": "今天"
+                if current_date == end_date
+                else WEEKDAY_LABELS[current_date.weekday()],
                 "minutes": minutes_by_date.get(current_date.isoformat(), 0),
             }
         )
@@ -307,14 +404,104 @@ def build_progress(actual, goal):
     }
 
 
+def calculate_streak(study_dates, today=None):
+    today = today or date.today()
+    valid_dates = set()
+
+    for value in study_dates:
+        try:
+            valid_dates.add(datetime.strptime(value, "%Y-%m-%d").date())
+        except (TypeError, ValueError):
+            continue
+
+    if not valid_dates:
+        return 0
+
+    cursor = today if today in valid_dates else today - timedelta(days=1)
+    streak = 0
+    while cursor in valid_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
 def register_routes(app):
+    @app.route("/register", methods=("GET", "POST"))
+    def register():
+        if current_user.is_authenticated:
+            return redirect(url_for("index"))
+
+        username = ""
+        error = None
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            error = validate_registration(username, password, confirm_password)
+
+            if error is None:
+                try:
+                    user = create_user(username, password)
+                    login_user(user)
+                except sqlite3.IntegrityError:
+                    error = "该用户名已经被注册。"
+
+                if error is None:
+                    flash("注册成功，欢迎开始学习。", "success")
+                    return redirect(url_for("index"))
+
+            flash(error, "error")
+
+        return render_template("register.html", username=username)
+
+    @app.route("/login", methods=("GET", "POST"))
+    def login():
+        if current_user.is_authenticated:
+            return redirect(url_for("index"))
+
+        username = ""
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            row = get_db().execute(
+                """
+                SELECT id, username, password_hash
+                FROM users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+
+            if row is not None and check_password_hash(
+                row["password_hash"], password
+            ):
+                login_user(
+                    User(row["id"], row["username"], row["password_hash"]),
+                    remember=request.form.get("remember") == "1",
+                )
+                flash("登录成功。", "success")
+                return redirect(url_for("index"))
+
+            flash("用户名或密码不正确。", "error")
+
+        return render_template("login.html", username=username)
+
+    @app.post("/logout")
+    @login_required
+    def logout():
+        logout_user()
+        flash("你已退出登录。", "success")
+        return redirect(url_for("login"))
+
     @app.get("/")
+    @login_required
     def index():
         filters, invalid_date = read_filters(request.args)
         if invalid_date:
             flash("筛选日期格式不正确，已忽略该条件。", "warning")
 
-        where_clause, params = build_record_query(filters)
+        user_id = current_user.id
+        where_clause, params = build_record_query(filters, user_id)
         db = get_db()
 
         records = db.execute(
@@ -353,15 +540,21 @@ def register_routes(app):
                 COALESCE(SUM(duration_minutes), 0) AS total_minutes,
                 COALESCE(SUM(completed), 0) AS completed_records
             FROM records
-            WHERE study_date BETWEEN ? AND ?
+            WHERE user_id = ? AND study_date BETWEEN ? AND ?
             """,
-            (week_start.isoformat(), week_end.isoformat()),
+            (user_id, week_start.isoformat(), week_end.isoformat()),
         ).fetchone()
 
         streak_dates = [
             row["study_date"]
             for row in db.execute(
-                "SELECT DISTINCT study_date FROM records ORDER BY study_date DESC"
+                """
+                SELECT DISTINCT study_date
+                FROM records
+                WHERE user_id = ?
+                ORDER BY study_date DESC
+                """,
+                (user_id,),
             ).fetchall()
         ]
         streak = calculate_streak(streak_dates, today_date)
@@ -386,8 +579,8 @@ def register_routes(app):
             subject_stats[0]["total_minutes"] if subject_stats else 0
         )
 
-        goals = get_settings(db)
-        trend, max_trend_minutes = build_trend(db, today_date)
+        goals = get_settings(db, user_id)
+        trend, max_trend_minutes = build_trend(db, today_date, user_id)
         daily_progress = build_progress(
             trend[-1]["minutes"], goals["daily_goal_minutes"]
         )
@@ -399,9 +592,10 @@ def register_routes(app):
             """
             SELECT DISTINCT subject
             FROM records
-            WHERE subject <> ''
+            WHERE user_id = ? AND subject <> ''
             ORDER BY subject COLLATE NOCASE
-            """
+            """,
+            (user_id,),
         ).fetchall()
 
         return render_template(
@@ -426,6 +620,7 @@ def register_routes(app):
         )
 
     @app.route("/records/new", methods=("GET", "POST"))
+    @login_required
     def new_record():
         record = blank_record()
 
@@ -438,10 +633,12 @@ def register_routes(app):
                 db.execute(
                     """
                     INSERT INTO records
-                        (title, subject, duration_minutes, study_date, notes, completed)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (user_id, title, subject, duration_minutes,
+                         study_date, notes, completed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
+                        current_user.id,
                         record["title"],
                         record["subject"],
                         record["duration_minutes"],
@@ -464,6 +661,7 @@ def register_routes(app):
         )
 
     @app.route("/records/<int:record_id>/edit", methods=("GET", "POST"))
+    @login_required
     def edit_record(record_id):
         existing = get_record_or_404(record_id)
         record = dict(existing)
@@ -479,7 +677,7 @@ def register_routes(app):
                     UPDATE records
                     SET title = ?, subject = ?, duration_minutes = ?,
                         study_date = ?, notes = ?, completed = ?
-                    WHERE id = ?
+                    WHERE id = ? AND user_id = ?
                     """,
                     (
                         record["title"],
@@ -489,6 +687,7 @@ def register_routes(app):
                         record["notes"],
                         record["completed"],
                         record_id,
+                        current_user.id,
                     ),
                 )
                 db.commit()
@@ -505,13 +704,18 @@ def register_routes(app):
         )
 
     @app.post("/records/<int:record_id>/toggle")
+    @login_required
     def toggle_record(record_id):
         record = get_record_or_404(record_id)
         completed = 0 if record["completed"] else 1
         db = get_db()
         db.execute(
-            "UPDATE records SET completed = ? WHERE id = ?",
-            (completed, record_id),
+            """
+            UPDATE records
+            SET completed = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (completed, record_id, current_user.id),
         )
         db.commit()
         flash("完成状态已更新。", "success")
@@ -520,10 +724,14 @@ def register_routes(app):
         return redirect(url_for("index", **filter_redirect_args(filters)))
 
     @app.post("/records/<int:record_id>/delete")
+    @login_required
     def delete_record(record_id):
         get_record_or_404(record_id)
         db = get_db()
-        db.execute("DELETE FROM records WHERE id = ?", (record_id,))
+        db.execute(
+            "DELETE FROM records WHERE id = ? AND user_id = ?",
+            (record_id, current_user.id),
+        )
         db.commit()
         flash("学习记录已删除。", "success")
 
@@ -531,9 +739,10 @@ def register_routes(app):
         return redirect(url_for("index", **filter_redirect_args(filters)))
 
     @app.get("/export.csv")
+    @login_required
     def export_records():
         filters, _ = read_filters(request.args)
-        where_clause, params = build_record_query(filters)
+        where_clause, params = build_record_query(filters, current_user.id)
         records = get_db().execute(
             "SELECT * FROM records"
             + where_clause
@@ -579,9 +788,10 @@ def register_routes(app):
         )
 
     @app.route("/settings", methods=("GET", "POST"))
+    @login_required
     def settings_page():
         db = get_db()
-        settings_data = get_settings(db)
+        settings_data = get_settings(db, current_user.id)
 
         if request.method == "POST":
             settings_data = read_settings_form(request.form)
@@ -590,15 +800,16 @@ def register_routes(app):
             if error is None:
                 db.execute(
                     """
-                    UPDATE settings
+                    UPDATE user_settings
                     SET daily_goal_minutes = ?,
                         weekly_goal_minutes = ?,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = 1
+                    WHERE user_id = ?
                     """,
                     (
                         settings_data["daily_goal_minutes"],
                         settings_data["weekly_goal_minutes"],
+                        current_user.id,
                     ),
                 )
                 db.commit()

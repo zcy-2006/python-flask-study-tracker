@@ -19,9 +19,27 @@ class StudyTrackerTestCase(unittest.TestCase):
             }
         )
         self.client = self.app.test_client()
+        response = self.register_user()
+        self.assertEqual(response.status_code, 302)
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def register_user(
+        self,
+        username="tester",
+        password="test-password",
+        follow_redirects=False,
+    ):
+        return self.client.post(
+            "/register",
+            data={
+                "username": username,
+                "password": password,
+                "confirm_password": password,
+            },
+            follow_redirects=follow_redirects,
+        )
 
     def create_record(self, **overrides):
         data = {
@@ -60,6 +78,7 @@ class StudyTrackerTestCase(unittest.TestCase):
 
         record = self.get_record()
         self.assertEqual(record["completed"], 1)
+        self.assertEqual(record["user_id"], 1)
 
     def test_create_record_requires_title(self):
         response = self.client.post(
@@ -188,6 +207,43 @@ class StudyTrackerTestCase(unittest.TestCase):
         self.assertIn("今日目标", page)
         self.assertIn("本周目标", page)
         self.assertIn("近 7 天趋势", page)
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        self.client.post("/logout")
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+
+    def test_login_and_logout(self):
+        self.client.post("/logout")
+        response = self.client.post(
+            "/login",
+            data={"username": "tester", "password": "test-password"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("登录成功", response.get_data(as_text=True))
+
+        response = self.client.post("/logout", follow_redirects=True)
+        self.assertIn("你已退出登录", response.get_data(as_text=True))
+
+    def test_user_data_is_isolated(self):
+        self.create_record(title="第一个用户的记录")
+        self.client.post("/logout")
+        self.register_user(username="second-user")
+
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn("第一个用户的记录", page)
+        self.assertIn("还没有学习记录", page)
+
+    def test_duplicate_username_is_rejected(self):
+        self.client.post("/logout")
+        response = self.register_user(follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("该用户名已经被注册", response.get_data(as_text=True))
 
     def test_health(self):
         response = self.client.get("/health")

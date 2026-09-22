@@ -4,6 +4,8 @@
 
 ## 功能
 
+- 用户注册、登录和退出
+- 每个用户拥有独立的学习记录和目标
 - 查看全部学习记录
 - 按日期、科目筛选记录
 - 搜索学习内容、科目和笔记
@@ -23,6 +25,7 @@
 
 - Python 3.8+
 - Flask 3.0
+- Flask-Login
 - SQLite
 - Jinja2
 - Bootstrap 5
@@ -43,7 +46,9 @@ python -m venv .venv
 http://127.0.0.1:5000
 ```
 
-第一次启动时会自动创建 `instance/study_tracker.sqlite`。
+第一次启动时会自动创建 `instance/study_tracker.sqlite`。第一个注册的用户会自动接管升级前没有归属的本地记录。
+
+正式部署前请设置安全的 `SECRET_KEY` 环境变量。
 
 ## 运行测试
 
@@ -55,6 +60,9 @@ http://127.0.0.1:5000
 
 | 地址 | 说明 |
 | --- | --- |
+| `/register` | 注册账号 |
+| `/login` | 登录 |
+| `/logout` | 退出登录，仅支持 POST |
 | `/` | 学习记录列表和统计面板 |
 | `/?q=Flask` | 搜索学习内容、科目和笔记 |
 | `/?date=2026-09-22` | 按日期筛选 |
@@ -76,6 +84,8 @@ python-flask-study-tracker/
 │   ├── base.html
 │   ├── form.html
 │   ├── index.html
+│   ├── login.html
+│   ├── register.html
 │   └── settings.html
 ├── static/
 │   └── style.css

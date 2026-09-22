@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}注册 | 学习打卡{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-5">
+        <div class="text-center mb-4">
+            <h1 class="h3 mb-1">创建账号</h1>
+            <p class="text-secondary mb-0">每个账号都有独立的学习记录和目标。</p>
+        </div>
+
+        <form class="card border-0 shadow-sm" method="post">
+            <div class="card-body p-4">
+                <div class="mb-3">
+                    <label class="form-label" for="username">用户名</label>
+                    <input class="form-control" id="username" name="username" type="text" minlength="3" maxlength="30" required autofocus value="{{ username }}">
+                    <div class="form-text">支持中文、字母、数字、下划线和连字符。</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="password">密码</label>
+                    <input class="form-control" id="password" name="password" type="password" minlength="8" maxlength="128" required>
+                    <div class="form-text">至少 8 个字符。</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="confirm_password">确认密码</label>
+                    <input class="form-control" id="confirm_password" name="confirm_password" type="password" minlength="8" maxlength="128" required>
+                </div>
+            </div>
+            <div class="card-footer bg-white p-3">
+                <button class="btn btn-primary w-100" type="submit">注册并开始学习</button>
+            </div>
+        </form>
+
+        <p class="text-center text-secondary mt-3 mb-0">
+            已经有账号？<a href="{{ url_for('login') }}">返回登录</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

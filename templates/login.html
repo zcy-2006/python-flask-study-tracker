@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}登录 | 学习打卡{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-5">
+        <div class="text-center mb-4">
+            <h1 class="h3 mb-1">欢迎回来</h1>
+            <p class="text-secondary mb-0">登录后查看你的学习进度。</p>
+        </div>
+
+        <form class="card border-0 shadow-sm" method="post">
+            <div class="card-body p-4">
+                <div class="mb-3">
+                    <label class="form-label" for="username">用户名</label>
+                    <input class="form-control" id="username" name="username" type="text" maxlength="30" required autofocus value="{{ username }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="password">密码</label>
+                    <input class="form-control" id="password" name="password" type="password" required>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" id="remember" name="remember" type="checkbox" value="1">
+                    <label class="form-check-label" for="remember">在这台电脑上保持登录</label>
+                </div>
+            </div>
+            <div class="card-footer bg-white p-3">
+                <button class="btn btn-primary w-100" type="submit">登录</button>
+            </div>
+        </form>
+
+        <p class="text-center text-secondary mt-3 mb-0">
+            还没有账号？<a href="{{ url_for('register') }}">立即注册</a>
+        </p>
+    </div>
+</div>
+{% endblock %}
