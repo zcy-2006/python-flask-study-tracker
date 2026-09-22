@@ -4,6 +4,7 @@
     {% if filters.date %}<input type="hidden" name="date" value="{{ filters.date }}">{% endif %}
     {% if filters.q %}<input type="hidden" name="q" value="{{ filters.q }}">{% endif %}
     {% if filters.subject %}<input type="hidden" name="subject" value="{{ filters.subject }}">{% endif %}
+    {% if filters.tag %}<input type="hidden" name="tag" value="{{ filters.tag }}">{% endif %}
 {%- endmacro %}
 
 {% block title %}学习记录 | 学习打卡{% endblock %}
@@ -15,7 +16,7 @@
         <p class="text-secondary mb-0">记录学习、追踪进度，让每天的努力看得见。</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-        <a class="btn btn-outline-secondary" href="{{ url_for('export_records', date=filters.date or None, q=filters.q or None, subject=filters.subject or None) }}">导出 CSV</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('export_records', date=filters.date or None, q=filters.q or None, subject=filters.subject or None, tag=filters.tag or None) }}">导出 CSV</a>
         <a class="btn btn-primary" href="{{ url_for('new_record') }}">新增学习记录</a>
     </div>
 </div>
@@ -23,8 +24,8 @@
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-body">
         <form class="row g-3 align-items-end" method="get">
-            <div class="col-12 col-lg-4">
-                <label class="form-label" for="q">搜索内容、科目或笔记</label>
+            <div class="col-12 col-lg-3">
+                <label class="form-label" for="q">搜索内容、科目、标签或笔记</label>
                 <input class="form-control" id="q" name="q" type="search" maxlength="100" value="{{ filters.q }}" placeholder="例如：Flask、Python">
             </div>
             <div class="col-12 col-sm-6 col-lg-2">
@@ -40,7 +41,16 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-12 col-lg-4 d-flex gap-2 flex-wrap">
+            <div class="col-12 col-sm-6 col-lg-2">
+                <label class="form-label" for="tag">标签</label>
+                <select class="form-select" id="tag" name="tag">
+                    <option value="">全部标签</option>
+                    {% for tag in all_tags %}
+                        <option value="{{ tag }}" {% if filters.tag == tag %}selected{% endif %}>{{ tag }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-lg-3 d-flex gap-2 flex-wrap">
                 <button class="btn btn-primary" type="submit">筛选</button>
                 <a class="btn btn-outline-primary" href="{{ url_for('index', date=today) }}">只看今天</a>
                 {% if has_filters %}
@@ -303,6 +313,13 @@
                                 <div class="fw-semibold">{{ record.title }}</div>
                                 <div class="small text-secondary">
                                     {{ record.subject or '未填写科目' }}
+                                    {% if record.tags %}
+                                        <span class="ms-1">
+                                        {% for tag in record.tags.split(',') %}
+                                            <span class="badge rounded-pill text-bg-light border">{{ tag }}</span>
+                                        {% endfor %}
+                                        </span>
+                                    {% endif %}
                                     {% if record.notes %}
                                         · {{ record.notes }}
                                     {% endif %}
@@ -340,6 +357,23 @@
             </table>
         </div>
     </div>
+    {% if total_pages > 1 %}
+        <nav class="mt-3" aria-label="学习记录分页">
+            <ul class="pagination justify-content-center mb-0">
+                <li class="page-item {{ 'disabled' if page <= 1 else '' }}">
+                    <a class="page-link" href="{{ url_for('index', page=page-1, date=filters.date or None, q=filters.q or None, subject=filters.subject or None, tag=filters.tag or None) }}">上一页</a>
+                </li>
+                {% for page_number in page_numbers %}
+                    <li class="page-item {{ 'active' if page_number == page else '' }}">
+                        <a class="page-link" href="{{ url_for('index', page=page_number, date=filters.date or None, q=filters.q or None, subject=filters.subject or None, tag=filters.tag or None) }}">{{ page_number }}</a>
+                    </li>
+                {% endfor %}
+                <li class="page-item {{ 'disabled' if page >= total_pages else '' }}">
+                    <a class="page-link" href="{{ url_for('index', page=page+1, date=filters.date or None, q=filters.q or None, subject=filters.subject or None, tag=filters.tag or None) }}">下一页</a>
+                </li>
+            </ul>
+        </nav>
+    {% endif %}
 {% else %}
     <div class="card border-0 shadow-sm">
         <div class="card-body py-5 text-center">

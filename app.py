@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import re
 import sqlite3
@@ -29,6 +30,7 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+PER_PAGE = 10
 
 csrf = CSRFProtect()
 
@@ -140,6 +142,11 @@ def migrate_db(db):
             "ALTER TABLE records ADD COLUMN user_id INTEGER REFERENCES users(id)"
         )
 
+    if "tags" not in columns:
+        db.execute(
+            "ALTER TABLE records ADD COLUMN tags TEXT NOT NULL DEFAULT ''"
+        )
+
     db.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_records_user_date
@@ -153,11 +160,21 @@ def blank_record():
     return {
         "title": "",
         "subject": "",
+        "tags": "",
         "duration_minutes": 60,
         "study_date": date.today().isoformat(),
         "notes": "",
         "completed": 0,
     }
+
+
+def normalize_tags(value):
+    tags = []
+    for part in re.split(r"[,，]", value or ""):
+        tag = part.strip()
+        if tag and tag not in tags:
+            tags.append(tag)
+    return ",".join(tags)
 
 
 def read_record_form(form):
@@ -170,6 +187,7 @@ def read_record_form(form):
     return {
         "title": form.get("title", "").strip(),
         "subject": form.get("subject", "").strip(),
+        "tags": normalize_tags(form.get("tags", "")),
         "duration_minutes": duration,
         "study_date": form.get("study_date", "").strip(),
         "notes": form.get("notes", "").strip(),
@@ -184,6 +202,13 @@ def validate_record(record):
         return "学习内容不能超过 100 个字符。"
     if len(record["subject"]) > 50:
         return "学习科目不能超过 50 个字符。"
+    if len(record["tags"]) > 200:
+        return "标签总长度不能超过 200 个字符。"
+    tag_list = [tag for tag in record["tags"].split(",") if tag]
+    if len(tag_list) > 10:
+        return "最多只能添加 10 个标签。"
+    if any(len(tag) > 20 for tag in tag_list):
+        return "每个标签不能超过 20 个字符。"
     if not isinstance(record["duration_minutes"], int):
         return "学习时长必须是整数。"
     if not 1 <= record["duration_minutes"] <= 1440:
@@ -270,6 +295,7 @@ def read_filters(args):
     selected_date = args.get("date", "").strip()
     query = args.get("q", "").strip()[:100]
     selected_subject = args.get("subject", "").strip()[:50]
+    selected_tag = args.get("tag", "").strip()[:20]
     invalid_date = bool(selected_date and not is_valid_date(selected_date))
 
     if invalid_date:
@@ -279,6 +305,7 @@ def read_filters(args):
         "date": selected_date,
         "q": query,
         "subject": selected_subject,
+        "tag": selected_tag,
     }
     return filters, invalid_date
 
@@ -299,16 +326,70 @@ def build_record_query(filters, user_id):
                 instr(lower(title), lower(?)) > 0
                 OR instr(lower(subject), lower(?)) > 0
                 OR instr(lower(notes), lower(?)) > 0
+                OR instr(lower(tags), lower(?)) > 0
             )
             """
         )
-        params.extend([search_value, search_value, search_value])
+        params.extend([search_value, search_value, search_value, search_value])
 
     if filters["subject"]:
         conditions.append("subject = ?")
         params.append(filters["subject"])
 
+    if filters["tag"]:
+        conditions.append(
+            "instr(',' || lower(tags) || ',', ',' || lower(?) || ',') > 0"
+        )
+        params.append(filters["tag"])
+
     return " WHERE " + " AND ".join(conditions), params
+
+
+def read_page(args, total_records):
+    try:
+        page = int(args.get("page", "1"))
+    except (TypeError, ValueError):
+        page = 1
+
+    total_pages = max(1, (total_records + PER_PAGE - 1) // PER_PAGE)
+    page = max(1, min(page, total_pages))
+    return page, total_pages
+
+
+def get_user_tags(db, user_id):
+    rows = db.execute(
+        """
+        SELECT tags
+        FROM records
+        WHERE user_id = ? AND tags <> ''
+        """,
+        (user_id,),
+    ).fetchall()
+    tags = set()
+    for row in rows:
+        tags.update(tag for tag in row["tags"].split(",") if tag)
+    return sorted(tags, key=lambda value: value.casefold())
+
+
+def insert_record(db, user_id, record):
+    db.execute(
+        """
+        INSERT INTO records
+            (user_id, title, subject, tags, duration_minutes,
+             study_date, notes, completed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            record["title"],
+            record["subject"],
+            record["tags"],
+            record["duration_minutes"],
+            record["study_date"],
+            record["notes"],
+            record["completed"],
+        ),
+    )
 
 
 def filter_redirect_args(filters):
@@ -550,6 +631,56 @@ def calculate_streak(study_dates, today=None):
     return streak
 
 
+
+def parse_backup_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("备份文件格式不正确。")
+    if payload.get("format") != "study-tracker-backup":
+        raise ValueError("这不是学习打卡网站的备份文件。")
+    if payload.get("version") != 1:
+        raise ValueError("暂不支持这个备份版本。")
+
+    settings_data = payload.get("settings")
+    if not isinstance(settings_data, dict):
+        raise ValueError("备份文件缺少学习目标。")
+    settings_data = {
+        "daily_goal_minutes": settings_data.get("daily_goal_minutes"),
+        "weekly_goal_minutes": settings_data.get("weekly_goal_minutes"),
+    }
+    settings_error = validate_settings(settings_data)
+    if settings_error:
+        raise ValueError("学习目标无效：" + settings_error)
+
+    raw_records = payload.get("records", [])
+    if not isinstance(raw_records, list):
+        raise ValueError("备份中的学习记录格式不正确。")
+    if len(raw_records) > 5000:
+        raise ValueError("一次最多导入 5000 条学习记录。")
+
+    records = []
+    for index, row in enumerate(raw_records, start=1):
+        if not isinstance(row, dict):
+            raise ValueError("第 %d 条学习记录格式不正确。" % index)
+
+        record = {
+            "title": str(row.get("title", "")).strip(),
+            "subject": str(row.get("subject", "")).strip(),
+            "tags": normalize_tags(str(row.get("tags", ""))),
+            "duration_minutes": row.get("duration_minutes"),
+            "study_date": str(row.get("study_date", "")).strip(),
+            "notes": str(row.get("notes", "")).strip(),
+            "completed": 1
+            if row.get("completed") in (1, True, "1", "true", "True")
+            else 0,
+        }
+        record_error = validate_record(record)
+        if record_error:
+            raise ValueError("第 %d 条学习记录无效：%s" % (index, record_error))
+        records.append(record)
+
+    return settings_data, records
+
+
 def register_routes(app):
     @app.route("/register", methods=("GET", "POST"))
     def register():
@@ -629,13 +760,6 @@ def register_routes(app):
         where_clause, params = build_record_query(filters, user_id)
         db = get_db()
 
-        records = db.execute(
-            "SELECT * FROM records"
-            + where_clause
-            + " ORDER BY study_date DESC, id DESC",
-            params,
-        ).fetchall()
-
         summary_row = db.execute(
             """
             SELECT
@@ -654,6 +778,21 @@ def register_routes(app):
             )
         else:
             summary["completion_rate"] = 0
+
+        page, total_pages = read_page(
+            request.args,
+            summary["total_records"],
+        )
+        page_numbers = list(
+            range(max(1, page - 2), min(total_pages, page + 2) + 1)
+        )
+        offset = (page - 1) * PER_PAGE
+        records = db.execute(
+            "SELECT * FROM records"
+            + where_clause
+            + " ORDER BY study_date DESC, id DESC LIMIT ? OFFSET ?",
+            params + [PER_PAGE, offset],
+        ).fetchall()
 
         today_date = date.today()
         week_start = today_date - timedelta(days=today_date.weekday())
@@ -729,6 +868,7 @@ def register_routes(app):
             """,
             (user_id,),
         ).fetchall()
+        all_tags = get_user_tags(db, user_id)
 
         return render_template(
             "index.html",
@@ -751,7 +891,11 @@ def register_routes(app):
             daily_progress=daily_progress,
             weekly_progress=weekly_progress,
             subjects=subjects,
+            all_tags=all_tags,
             filters=filters,
+            page=page,
+            total_pages=total_pages,
+            page_numbers=page_numbers,
             has_filters=any(filters.values()),
             today=today_date.isoformat(),
         )
@@ -767,23 +911,7 @@ def register_routes(app):
 
             if error is None:
                 db = get_db()
-                db.execute(
-                    """
-                    INSERT INTO records
-                        (user_id, title, subject, duration_minutes,
-                         study_date, notes, completed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        current_user.id,
-                        record["title"],
-                        record["subject"],
-                        record["duration_minutes"],
-                        record["study_date"],
-                        record["notes"],
-                        record["completed"],
-                    ),
-                )
+                insert_record(db, current_user.id, record)
                 db.commit()
                 flash("学习记录已添加。", "success")
                 return redirect(url_for("index"))
@@ -812,13 +940,14 @@ def register_routes(app):
                 db.execute(
                     """
                     UPDATE records
-                    SET title = ?, subject = ?, duration_minutes = ?,
+                    SET title = ?, subject = ?, tags = ?, duration_minutes = ?,
                         study_date = ?, notes = ?, completed = ?
                     WHERE id = ? AND user_id = ?
                     """,
                     (
                         record["title"],
                         record["subject"],
+                        record["tags"],
                         record["duration_minutes"],
                         record["study_date"],
                         record["notes"],
@@ -894,6 +1023,7 @@ def register_routes(app):
                 "ID",
                 "学习内容",
                 "科目",
+                "标签",
                 "学习时长（分钟）",
                 "学习日期",
                 "状态",
@@ -907,6 +1037,7 @@ def register_routes(app):
                     record["id"],
                     record["title"],
                     record["subject"],
+                    record["tags"],
                     record["duration_minutes"],
                     record["study_date"],
                     "已完成" if record["completed"] else "进行中",
@@ -1013,6 +1144,127 @@ def register_routes(app):
             account=dict(user_row),
             account_stats=account_stats,
         )
+
+    @app.get("/backup.json")
+    @login_required
+    def backup_json():
+        db = get_db()
+        records = db.execute(
+            """
+            SELECT title, subject, tags, duration_minutes,
+                   study_date, notes, completed, created_at
+            FROM records
+            WHERE user_id = ?
+            ORDER BY study_date, id
+            """,
+            (current_user.id,),
+        ).fetchall()
+        settings_data = get_settings(db, current_user.id)
+        settings_data["updated_at"] = str(settings_data.get("updated_at", ""))
+        backup_records = []
+        for record in records:
+            record_data = dict(record)
+            record_data["created_at"] = str(record_data.get("created_at", ""))
+            backup_records.append(record_data)
+
+        payload = {
+            "format": "study-tracker-backup",
+            "version": 1,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "settings": settings_data,
+            "records": backup_records,
+        }
+        return Response(
+            json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"),
+            content_type="application/json; charset=utf-8",
+            headers={
+                "Content-Disposition": "attachment; filename=study-tracker-backup.json"
+            },
+        )
+
+    @app.post("/import")
+    @login_required
+    def import_backup():
+        backup_file = request.files.get("backup_file")
+        mode = request.form.get("mode", "merge")
+        if mode not in ("merge", "replace"):
+            mode = "merge"
+
+        if backup_file is None or not backup_file.filename:
+            flash("请选择备份文件。", "error")
+            return redirect(url_for("account_page"))
+
+        raw_data = backup_file.read(1000001)
+        if len(raw_data) > 1000000:
+            flash("备份文件不能超过 1 MB。", "error")
+            return redirect(url_for("account_page"))
+
+        try:
+            payload = json.loads(raw_data.decode("utf-8-sig"))
+            settings_data, imported_records = parse_backup_payload(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            flash("备份文件不是有效的 JSON 文件。", "error")
+            return redirect(url_for("account_page"))
+        except ValueError as error:
+            flash(str(error), "error")
+            return redirect(url_for("account_page"))
+
+        db = get_db()
+        if mode == "replace":
+            db.execute("DELETE FROM records WHERE user_id = ?", (current_user.id,))
+            imported_count = len(imported_records)
+            for record in imported_records:
+                insert_record(db, current_user.id, record)
+            skipped_count = 0
+        else:
+            imported_count = 0
+            skipped_count = 0
+            for record in imported_records:
+                duplicate = db.execute(
+                    """
+                    SELECT 1
+                    FROM records
+                    WHERE user_id = ? AND title = ? AND subject = ?
+                      AND tags = ? AND duration_minutes = ?
+                      AND study_date = ? AND notes = ?
+                    """,
+                    (
+                        current_user.id,
+                        record["title"],
+                        record["subject"],
+                        record["tags"],
+                        record["duration_minutes"],
+                        record["study_date"],
+                        record["notes"],
+                    ),
+                ).fetchone()
+                if duplicate is not None:
+                    skipped_count += 1
+                    continue
+                insert_record(db, current_user.id, record)
+                imported_count += 1
+
+        db.execute(
+            """
+            UPDATE user_settings
+            SET daily_goal_minutes = ?,
+                weekly_goal_minutes = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (
+                settings_data["daily_goal_minutes"],
+                settings_data["weekly_goal_minutes"],
+                current_user.id,
+            ),
+        )
+        db.commit()
+        flash(
+            "导入完成：新增 %d 条，跳过 %d 条。"
+            % (imported_count, skipped_count),
+            "success",
+        )
+        return redirect(url_for("account_page"))
 
     @app.get("/health")
     def health():

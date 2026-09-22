@@ -29,6 +29,12 @@
                     </div>
                 </div>
 
+                <div class="mb-3">
+                    <label class="form-label" for="tags">标签</label>
+                    <input class="form-control" id="tags" name="tags" type="text" maxlength="200" value="{{ record.tags }}" placeholder="例如：Python, Flask, 项目练习">
+                    <div class="form-text">多个标签用逗号分隔，最多 10 个。</div>
+                </div>
+
                 <div class="my-3">
                     <label class="form-label" for="study_date">学习日期 *</label>
                     <input class="form-control" id="study_date" name="study_date" type="date" required value="{{ record.study_date }}">

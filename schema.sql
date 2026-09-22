@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS records (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     subject TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',
     duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
     study_date TEXT NOT NULL,
     notes TEXT NOT NULL DEFAULT '',

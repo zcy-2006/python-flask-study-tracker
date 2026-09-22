@@ -1,12 +1,45 @@
 {% extends "base.html" %}
 
-{% block title %}账户管理 | 学习打卡{% endblock %}
+{% block title %}账户管理 | 学习打卡
+<div class="row justify-content-center mt-4">
+    <div class="col-12 col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white p-4 pb-0 border-0">
+                <h2 class="h5 mb-1">数据备份与恢复</h2>
+                <p class="text-secondary small mb-0">下载 JSON 备份，或从已有备份中恢复学习记录和目标。</p>
+            </div>
+            <div class="card-body p-4">
+                <a class="btn btn-outline-primary mb-4" href="{{ url_for('backup_json') }}">下载完整备份</a>
+                <form method="post" action="{{ url_for('import_backup') }}" enctype="multipart/form-data" onsubmit="return confirm('确定导入这个备份吗？选择“替换”会删除当前账号的全部记录。');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="backup_file">选择备份文件</label>
+                        <input class="form-control" id="backup_file" name="backup_file" type="file" accept=".json,application/json" required>
+                    </div>
+                    <div class="mb-3">
+                        <span class="form-label d-block">导入方式</span>
+                        <div class="form-check">
+                            <input class="form-check-input" id="merge" name="mode" type="radio" value="merge" checked>
+                            <label class="form-check-label" for="merge">合并导入，自动跳过重复记录</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" id="replace" name="mode" type="radio" value="replace">
+                            <label class="form-check-label text-danger" for="replace">替换当前学习记录</label>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" type="submit">开始导入</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
         <h1 class="h3 mb-1">账户管理</h1>
-        <p class="text-secondary mb-0">查看账户信息并定期更新密码。</p>
+        <p class="text-secondary mb-0">查看账户信息、修改密码并管理数据备份。</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">返回首页</a>
 </div>

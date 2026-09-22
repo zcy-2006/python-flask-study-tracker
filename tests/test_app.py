@@ -1,3 +1,5 @@
+import io
+import json
 import os
 import sqlite3
 import tempfile
@@ -46,6 +48,7 @@ class StudyTrackerTestCase(unittest.TestCase):
         data = {
             "title": "学习 Flask 路由",
             "subject": "Python Web",
+            "tags": "Python,Flask",
             "duration_minutes": "60",
             "study_date": date.today().isoformat(),
             "notes": "完成第一个页面",
@@ -80,6 +83,7 @@ class StudyTrackerTestCase(unittest.TestCase):
         record = self.get_record()
         self.assertEqual(record["completed"], 1)
         self.assertEqual(record["user_id"], 1)
+        self.assertEqual(record["tags"], "Python,Flask")
 
     def test_create_record_requires_title(self):
         response = self.client.post(
@@ -130,7 +134,7 @@ class StudyTrackerTestCase(unittest.TestCase):
 
     def test_search_and_subject_filter(self):
         self.create_record(title="学习 Flask 路由", subject="Python Web")
-        self.create_record(title="学习 SQL 查询", subject="Database")
+        self.create_record(title="学习 SQL 查询", subject="Database", tags="Database,SQL")
 
         search_page = self.client.get(
             "/", query_string={"q": "Flask"}
@@ -313,6 +317,109 @@ class StudyTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("strict-origin", response.headers["Referrer-Policy"])
+
+    def test_tag_filter(self):
+        self.create_record(title="Flask 学习", tags="Python,Flask")
+        self.create_record(title="数据库学习", tags="Database,SQL")
+
+        page = self.client.get(
+            "/", query_string={"tag": "Database"}
+        ).get_data(as_text=True)
+
+        self.assertIn("数据库学习", page)
+        self.assertNotIn("Flask 学习", page)
+
+    def test_record_pagination(self):
+        for index in range(12):
+            self.create_record(title="分页记录 %02d" % index)
+
+        first_page = self.client.get("/").get_data(as_text=True)
+        second_page = self.client.get(
+            "/", query_string={"page": 2}
+        ).get_data(as_text=True)
+
+        self.assertEqual(first_page.count("分页记录"), 10)
+        self.assertIn("分页记录 00", second_page)
+        self.assertNotIn("分页记录 00", first_page)
+        self.assertIn('aria-label="学习记录分页"', first_page)
+
+    def test_backup_export(self):
+        self.create_record(title="备份测试记录")
+        response = self.client.get("/backup.json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/json", response.content_type)
+        payload = response.get_json()
+        self.assertEqual(payload["format"], "study-tracker-backup")
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["settings"]["daily_goal_minutes"], 60)
+        self.assertEqual(payload["records"][0]["title"], "备份测试记录")
+        self.assertEqual(payload["records"][0]["tags"], "Python,Flask")
+
+    def test_backup_import_merge_skips_duplicates(self):
+        self.create_record(title="导入测试记录")
+        payload = self.client.get("/backup.json").get_json()
+
+        response = self.client.post(
+            "/import",
+            data={
+                "mode": "merge",
+                "backup_file": (
+                    io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")),
+                    "backup.json",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("新增 0 条，跳过 1 条", response.get_data(as_text=True))
+
+    def test_backup_import_replace(self):
+        self.create_record(title="旧记录")
+        self.create_record(title="将要保留的记录")
+        payload = self.client.get("/backup.json").get_json()
+        keep_record = next(
+            record
+            for record in payload["records"]
+            if record["title"] == "将要保留的记录"
+        )
+        payload["records"] = [keep_record]
+
+        response = self.client.post(
+            "/import",
+            data={
+                "mode": "replace",
+                "backup_file": (
+                    io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")),
+                    "backup.json",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertIn("新增 1 条，跳过 0 条", response.get_data(as_text=True))
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertIn("将要保留的记录", page)
+        self.assertNotIn("旧记录", page)
+
+    def test_invalid_backup_is_rejected(self):
+        response = self.client.post(
+            "/import",
+            data={
+                "mode": "merge",
+                "backup_file": (
+                    io.BytesIO(b'{"format": "wrong"}'),
+                    "backup.json",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertIn("这不是学习打卡网站的备份文件", response.get_data(as_text=True))
 
     def test_health(self):
         response = self.client.get("/health")
