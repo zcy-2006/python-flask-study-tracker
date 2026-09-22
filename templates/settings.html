@@ -11,6 +11,7 @@
         </div>
 
         <form class="card border-0 shadow-sm" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="card-body p-4">
                 <div class="mb-4">
                     <label class="form-label" for="daily_goal_minutes">每日学习目标（分钟）</label>

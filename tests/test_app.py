@@ -15,6 +15,7 @@ class StudyTrackerTestCase(unittest.TestCase):
             {
                 "TESTING": True,
                 "SECRET_KEY": "test-secret",
+                "WTF_CSRF_ENABLED": False,
                 "DATABASE": self.database_path,
             }
         )
@@ -256,6 +257,62 @@ class StudyTrackerTestCase(unittest.TestCase):
         self.assertIn("最佳一天", page)
         self.assertEqual(page.count('class="heatmap-week"'), 8)
         self.assertIn("level-4", page)
+
+    def test_account_page(self):
+        response = self.client.get("/account")
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("账户管理", page)
+        self.assertIn("tester", page)
+
+    def test_change_password(self):
+        response = self.client.post(
+            "/account",
+            data={
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("密码已更新", response.get_data(as_text=True))
+
+        self.client.post("/logout")
+        old_login = self.client.post(
+            "/login",
+            data={"username": "tester", "password": "test-password"},
+            follow_redirects=True,
+        )
+        self.assertIn("用户名或密码不正确", old_login.get_data(as_text=True))
+
+        new_login = self.client.post(
+            "/login",
+            data={"username": "tester", "password": "new-test-password"},
+            follow_redirects=True,
+        )
+        self.assertIn("登录成功", new_login.get_data(as_text=True))
+
+    def test_change_password_rejects_wrong_current_password(self):
+        response = self.client.post(
+            "/account",
+            data={
+                "current_password": "wrong-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("当前密码不正确", response.get_data(as_text=True))
+
+    def test_security_headers(self):
+        response = self.client.get("/health")
+
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertIn("strict-origin", response.headers["Referrer-Policy"])
 
     def test_health(self):
         response = self.client.get("/health")

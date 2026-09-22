@@ -5,6 +5,8 @@
 ## 功能
 
 - 用户注册、登录和退出
+- 查看账户信息并修改密码
+- CSRF 防护和安全响应头
 - 每个用户拥有独立的学习记录和目标
 - 查看全部学习记录
 - 按日期、科目筛选记录
@@ -28,6 +30,7 @@
 - Python 3.8+
 - Flask 3.0
 - Flask-Login
+- Flask-WTF
 - SQLite
 - Jinja2
 - Bootstrap 5
@@ -50,7 +53,7 @@ http://127.0.0.1:5000
 
 第一次启动时会自动创建 `instance/study_tracker.sqlite`。第一个注册的用户会自动接管升级前没有归属的本地记录。
 
-正式部署前请设置安全的 `SECRET_KEY` 环境变量。
+正式部署前请设置安全的 `SECRET_KEY` 环境变量；启用 HTTPS 后同时设置 `SESSION_COOKIE_SECURE=1`。
 
 ## 运行测试
 
@@ -63,6 +66,7 @@ http://127.0.0.1:5000
 | 地址 | 说明 |
 | --- | --- |
 | `/register` | 注册账号 |
+| `/account` | 查看账户信息、修改密码 |
 | `/login` | 登录 |
 | `/logout` | 退出登录，仅支持 POST |
 | `/` | 学习记录列表和统计面板 |
@@ -84,6 +88,7 @@ python-flask-study-tracker/
 ├── requirements.txt
 ├── templates/
 │   ├── base.html
+│   ├── account.html
 │   ├── form.html
 │   ├── index.html
 │   ├── login.html

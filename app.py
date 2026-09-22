@@ -17,6 +17,7 @@ from flask import (
     request,
     url_for,
 )
+from flask_wtf.csrf import CSRFProtect
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -28,6 +29,8 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+csrf = CSRFProtect()
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -53,12 +56,32 @@ def load_user(user_id):
     return User(row["id"], row["username"], row["password_hash"])
 
 
+def register_security_headers(app):
+    @app.after_request
+    def add_security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Referrer-Policy", "strict-origin-when-cross-origin"
+        )
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        return response
+
+
 def create_app(test_config=None):
     """Create and configure the Flask application."""
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SECRET_KEY", "dev-change-me"),
         DATABASE=os.path.join(app.instance_path, "study_tracker.sqlite"),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
+        REMEMBER_COOKIE_HTTPONLY=True,
+        REMEMBER_COOKIE_SAMESITE="Lax",
+        REMEMBER_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
     )
 
     if test_config is not None:
@@ -66,7 +89,9 @@ def create_app(test_config=None):
 
     os.makedirs(app.instance_path, exist_ok=True)
 
+    csrf.init_app(app)
     login_manager.init_app(app)
+    register_security_headers(app)
     register_database(app)
     register_routes(app)
     return app
@@ -487,6 +512,21 @@ def build_heatmap(db, end_date, user_id, daily_goal, weeks=8):
         heatmap_weeks.append(week)
 
     return heatmap_weeks, start_date, end_date
+
+
+
+def validate_password_change(current_password, new_password, confirm_password):
+    if not current_password:
+        return "请输入当前密码。"
+    if len(new_password) < 8:
+        return "新密码至少需要 8 个字符。"
+    if len(new_password) > 128:
+        return "新密码不能超过 128 个字符。"
+    if new_password != confirm_password:
+        return "两次输入的新密码不一致。"
+    if current_password == new_password:
+        return "新密码不能与当前密码相同。"
+    return None
 
 
 def calculate_streak(study_dates, today=None):
@@ -916,6 +956,63 @@ def register_routes(app):
             flash(error, "error")
 
         return render_template("settings.html", settings=settings_data)
+
+    @app.route("/account", methods=("GET", "POST"))
+    @login_required
+    def account_page():
+        db = get_db()
+        user_row = db.execute(
+            """
+            SELECT id, username, password_hash, created_at
+            FROM users
+            WHERE id = ?
+            """,
+            (current_user.id,),
+        ).fetchone()
+
+        account_stats = db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_records,
+                COALESCE(SUM(duration_minutes), 0) AS total_minutes,
+                COUNT(DISTINCT study_date) AS active_days
+            FROM records
+            WHERE user_id = ?
+            """,
+            (current_user.id,),
+        ).fetchone()
+
+        if request.method == "POST":
+            current_password = request.form.get("current_password", "")
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            error = validate_password_change(
+                current_password,
+                new_password,
+                confirm_password,
+            )
+
+            if error is None and not check_password_hash(
+                user_row["password_hash"], current_password
+            ):
+                error = "当前密码不正确。"
+
+            if error is None:
+                db.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (generate_password_hash(new_password), current_user.id),
+                )
+                db.commit()
+                flash("密码已更新。", "success")
+                return redirect(url_for("account_page"))
+
+            flash(error, "error")
+
+        return render_template(
+            "account.html",
+            account=dict(user_row),
+            account_stats=account_stats,
+        )
 
     @app.get("/health")
     def health():
