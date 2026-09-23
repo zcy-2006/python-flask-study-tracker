@@ -202,3 +202,39 @@ kbd {
         margin-left: 0 !important;
     }
 }
+
+
+.skip-link {
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 2000;
+    padding: 0.55rem 0.8rem;
+    border-radius: 0.5rem;
+    background: #0d6efd;
+    color: #fff;
+}
+
+.install-button {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 1050;
+    box-shadow: 0 0.5rem 1.5rem rgba(13, 110, 253, 0.35);
+}
+
+.scroll-top {
+    position: fixed;
+    right: 1rem;
+    bottom: 4.5rem;
+    z-index: 1050;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 50%;
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+}
+
+:focus-visible {
+    outline: 3px solid rgba(13, 110, 253, 0.45);
+    outline-offset: 3px;
+}

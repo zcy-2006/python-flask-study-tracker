@@ -68,4 +68,39 @@ document.addEventListener("DOMContentLoaded", function () {
             target.form.requestSubmit();
         }
     });
+
+    const installButton = document.getElementById("install-app");
+    let deferredInstallPrompt = null;
+
+    window.addEventListener("beforeinstallprompt", function (event) {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        if (installButton) installButton.hidden = false;
+    });
+
+    if (installButton) {
+        installButton.addEventListener("click", async function () {
+            if (!deferredInstallPrompt) return;
+            deferredInstallPrompt.prompt();
+            await deferredInstallPrompt.userChoice;
+            deferredInstallPrompt = null;
+            installButton.hidden = true;
+        });
+    }
+
+    const scrollTop = document.getElementById("scroll-top");
+    if (scrollTop) {
+        window.addEventListener("scroll", function () {
+            scrollTop.hidden = window.scrollY < 500;
+        }, {passive: true});
+        scrollTop.addEventListener("click", function () {
+            window.scrollTo({top: 0, behavior: "smooth"});
+        });
+    }
+
+    if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+            navigator.serviceWorker.register("/static/service-worker.js").catch(function () {});
+        });
+    }
 });
