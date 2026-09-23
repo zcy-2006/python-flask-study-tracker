@@ -138,3 +138,67 @@ body {
 .heatmap-day.is-future {
     opacity: 0.35;
 }
+
+
+:root {
+    --app-bg: #f6f8fb;
+    --app-glow: rgba(13, 110, 253, 0.10);
+    --app-track: #edf2f7;
+}
+
+[data-bs-theme="dark"] {
+    --app-bg: #0f172a;
+    --app-glow: rgba(77, 171, 247, 0.14);
+    --app-track: #243247;
+}
+
+body {
+    background:
+        radial-gradient(circle at top right, var(--app-glow), transparent 28rem),
+        var(--app-bg);
+}
+
+.card,
+.list-group-item,
+.table {
+    transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+[data-bs-theme="dark"] .bg-light,
+[data-bs-theme="dark"] .card-footer.bg-white,
+[data-bs-theme="dark"] .card-header.bg-white {
+    background-color: #172033 !important;
+}
+
+[data-bs-theme="dark"] .table-light {
+    --bs-table-bg: #1b263b;
+    --bs-table-color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .trend-bar-track,
+[data-bs-theme="dark"] .heatmap-day {
+    background: var(--app-track);
+}
+
+.navbar {
+    backdrop-filter: blur(12px);
+}
+
+kbd {
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.35rem;
+    background: rgba(108, 117, 125, 0.15);
+    color: inherit;
+}
+
+@media (max-width: 991.98px) {
+    .navbar-nav {
+        align-items: flex-start !important;
+        padding-top: 0.5rem;
+    }
+
+    #theme-toggle {
+        margin-top: 0.5rem;
+        margin-left: 0 !important;
+    }
+}
